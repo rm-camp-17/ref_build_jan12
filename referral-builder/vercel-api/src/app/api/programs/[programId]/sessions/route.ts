@@ -19,11 +19,11 @@ export async function GET(
 
   try {
     // Fetch sessions associated with this program
-    const associationsResult = await hubspotClient.crm.associations.batchApi.read({
-      inputs: [{ id: programId }],
-      fromObjectType: config.objectTypes.program,
-      toObjectType: config.objectTypes.session,
-    });
+    const associationsResult = await hubspotClient.crm.associations.batchApi.read(
+      config.objectTypes.program,
+      config.objectTypes.session,
+      { inputs: [{ id: programId }] }
+    );
 
     if (
       associationsResult.results.length === 0 ||

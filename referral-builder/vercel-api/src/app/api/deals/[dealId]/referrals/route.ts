@@ -19,11 +19,11 @@ export async function GET(
 
   try {
     // Fetch referrals associated with this deal
-    const associationsResult = await hubspotClient.crm.associations.batchApi.read({
-      inputs: [{ id: dealId }],
-      fromObjectType: 'deals',
-      toObjectType: config.objectTypes.referral,
-    });
+    const associationsResult = await hubspotClient.crm.associations.batchApi.read(
+      'deals',
+      config.objectTypes.referral,
+      { inputs: [{ id: dealId }] }
+    );
 
     if (
       associationsResult.results.length === 0 ||
