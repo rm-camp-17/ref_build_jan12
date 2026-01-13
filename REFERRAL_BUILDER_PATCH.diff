@@ -1,0 +1,674 @@
+--- a/referral-builder/hubspot-card/src/app/cards/ReferralBuilderCard.tsx
++++ b/referral-builder/hubspot-card/src/app/cards/ReferralBuilderCard.tsx
+@@ -2,6 +2,12 @@ import React, { useEffect, useMemo, useState } from "react";
+ import {
+   hubspot,
+   Box,
+   Button,
++  Checkbox,
++  Alert,
++  LoadingSpinner,
++  EmptyState,
+   Divider,
+   Flex,
+   Heading,
+@@ -19,10 +25,17 @@ type ReferralRow = {
+   id: string;
+   referralKey?: string;
+   outreachStatus?: string;
+   clientInterest?: string;
+   note?: string;
++  createdAt?: string;
+   company?: { id?: string; name?: string };
+   program?: { id?: string; name?: string };
+   session?: { id?: string; name?: string; startDate?: string; endDate?: string; price?: string };
+ };
+
++type DealCompany = {
++  id: string;
++  name?: string;
++};
++
+ // Default options (will be replaced by API-loaded options if available)
+ const DEFAULT_OUTREACH_OPTIONS: Option[] = [
+-  { label: "Draft", value: "Draft" },
+-  { label: "Ready to Send", value: "Ready to Send" },
+-  { label: "Sent", value: "Sent" },
+-  { label: "Resend", value: "Resend" },
+-  { label: "Don't send (already sent)", value: "Don't send (already sent)" },
++  { label: "Draft", value: "draft" },
++  { label: "Ready to Send", value: "ready_to_send" },
++  { label: "Sent", value: "sent" },
++  { label: "Resend", value: "resend" },
++  { label: "Don't send (already sent)", value: "dont_send" },
+ ];
+
+ const DEFAULT_INTEREST_OPTIONS: Option[] = [
+-  { label: "Active / considering", value: "Active / considering" },
+-  { label: "Shortlist", value: "Shortlist" },
+-  { label: "Neutral", value: "Neutral" },
+-  { label: "Unlikely", value: "Unlikely" },
+-  { label: "Declined", value: "Declined" },
+-  { label: "Selected", value: "Selected" },
++  { label: "Active / considering", value: "active_considering" },
++  { label: "Shortlist", value: "shortlist" },
++  { label: "Neutral", value: "neutral" },
++  { label: "Unlikely", value: "unlikely" },
++  { label: "Declined", value: "declined" },
++  { label: "Selected", value: "selected" },
+ ];
+
+-const DEFAULT_PREVIOUSLY_SENT_OPTIONS: Option[] = [
+-  { label: "Yes (true)", value: "Yes (true)" },
+-  { label: "No (false)", value: "No (false)" },
+-];
++// Default values for new referrals
++const DEFAULT_REFERRAL_STATUS = "ready_to_send"; // "Ready to Send"
++const DEFAULT_CLIENT_INTEREST = "active_considering"; // "Active / considering"
+
+ function ReferralBuilderCard({ context, actions }: any) {
+   const dealId = context?.crm?.objectId ? String(context.crm.objectId) : null;
+
+-  const [busy, setBusy] = useState(false);
++  const [initialLoading, setInitialLoading] = useState(true);
++  const [busy, setBusy] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+
+   const [referrals, setReferrals] = useState<ReferralRow[]>([]);
++  const [dealCompanies, setDealCompanies] = useState<DealCompany[]>([]);
+
+   const [companyQuery, setCompanyQuery] = useState("");
+   const [companyOptions, setCompanyOptions] = useState<Option[]>([]);
+@@ -75,10 +88,17 @@ function ReferralBuilderCard({ context, actions }: any) {
+
+   const [note, setNote] = useState("");
+
++  const [selectedOutreachStatus, setSelectedOutreachStatus] = useState<string>(DEFAULT_REFERRAL_STATUS);
++  const [selectedClientInterest, setSelectedClientInterest] = useState<string>(DEFAULT_CLIENT_INTEREST);
++
++  const [associateToDeal, setAssociateToDeal] = useState(true);
++
+   const [outreachOptions, setOutreachOptions] = useState<Option[]>(DEFAULT_OUTREACH_OPTIONS);
+   const [interestOptions, setInterestOptions] = useState<Option[]>(DEFAULT_INTEREST_OPTIONS);
+-  const [previouslySentOptions, setPreviouslySentOptions] = useState<Option[]>(DEFAULT_PREVIOUSLY_SENT_OPTIONS);
+
++  const dealHasCompany = dealCompanies.length > 0;
++  const showAssociateCheckbox = !dealHasCompany && selectedCompanyId;
++
+   const canCreate = useMemo(() => {
+-    return Boolean(dealId && selectedCompanyId);
+-  }, [dealId, selectedCompanyId]);
++    return Boolean(dealId && selectedCompanyId && !busy);
++  }, [dealId, selectedCompanyId, busy]);
+
+   async function apiRequest(path: string, init?: { method?: string; body?: any }) {
+@@ -106,8 +126,20 @@ function ReferralBuilderCard({ context, actions }: any) {
+     }
+
+     if (!res.ok) {
+-      const msg = data?.error || data?.message || `Request failed (${res.status})`;
+-      throw new Error(msg);
++      let msg = `Request failed (${res.status})`;
++
++      if (data?.error) {
++        msg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
++      } else if (data?.message) {
++        msg = data.message;
++      } else if (data?.errors && Array.isArray(data.errors)) {
++        msg = data.errors.map((e: any) => e.message || JSON.stringify(e)).join('; ');
++      }
++
++      throw new Error(msg);
+     }
+     return data;
+   }
++
++  async function hubspotCrmRequest(path: string) {
++    const url = `https://api.hubapi.com${path}`;
++    const res = await hubspot.fetch(url);
++
++    if (!res.ok) {
++      let errorMsg = `HubSpot API error (${res.status})`;
++      try {
++        const errorData = await res.json();
++        errorMsg = errorData?.message || errorMsg;
++      } catch (e) {
++        // ignore
++      }
++      throw new Error(errorMsg);
++    }
++
++    return await res.json();
++  }
++
++  async function loadDealCompanies() {
++    if (!dealId) return;
++
++    try {
++      const data = await hubspotCrmRequest(
++        `/crm/v4/objects/deals/${dealId}?associations=companies`
++      );
++
++      const companies: DealCompany[] = [];
++
++      if (data?.associations?.companies?.results) {
++        for (const assoc of data.associations.companies.results) {
++          try {
++            const companyData = await hubspotCrmRequest(
++              `/crm/v3/objects/companies/${assoc.toObjectId}?properties=name`
++            );
++            companies.push({
++              id: assoc.toObjectId,
++              name: companyData?.properties?.name || `Company ${assoc.toObjectId}`,
++            });
++          } catch (e) {
++            console.error(`Failed to load company ${assoc.toObjectId}:`, e);
++            companies.push({ id: assoc.toObjectId });
++          }
++        }
++      }
++
++      setDealCompanies(companies);
++
++      if (companies.length === 1 && !selectedCompanyId) {
++        setSelectedCompanyId(companies[0].id);
++        await loadPrograms(companies[0].id);
++      }
++    } catch (e: any) {
++      console.error("Failed to load deal companies:", e);
++    }
++  }
+
+   async function loadPropertyDefinitions() {
+@@ -122,9 +154,6 @@ function ReferralBuilderCard({ context, actions }: any) {
+       if (props.client_interest?.options?.length) {
+         setInterestOptions(props.client_interest.options);
+       }
+-      if (props.previously_sent_to_camp?.options?.length) {
+-        setPreviouslySentOptions(props.previously_sent_to_camp.options);
+-      }
+     } catch (e) {
+       console.error("Failed to load property definitions:", e);
+       // Continue with default options
+@@ -185,17 +214,25 @@ function ReferralBuilderCard({ context, actions }: any) {
+   async function createReferral() {
+     if (!dealId) return;
+-    if (!selectedCompanyId) return;
++    if (!selectedCompanyId) {
++      setError("Deal ID and Company are required");
++      return;
++    }
+
+     const payload = {
+       dealId,
+       companyId: selectedCompanyId,
+       programId: selectedProgramId || undefined,
+       sessionId: selectedSessionId || undefined,
+       note: note || undefined,
++      outreachStatus: selectedOutreachStatus,
++      clientInterest: selectedClientInterest,
++      associateToDeal: showAssociateCheckbox && associateToDeal,
+     };
+
+     const data = await apiRequest(`/api/referrals`, { method: "POST", body: payload });
+
+     const message = data?.created
+-      ? `Referral created (ID ${data?.referralId || "unknown"})`
++      ? `Referral created successfully (ID ${data?.referralId || "unknown"})`
+       : `Referral updated (ID ${data?.referralId || "unknown"})`;
+
+@@ -216,8 +253,12 @@ function ReferralBuilderCard({ context, actions }: any) {
+     setProgramOptions([]);
+     setSessionOptions([]);
+
++    setSelectedOutreachStatus(DEFAULT_REFERRAL_STATUS);
++    setSelectedClientInterest(DEFAULT_CLIENT_INTEREST);
++
+     // Refresh referrals list
+-    await loadReferrals();
++    await Promise.all([loadReferrals(), loadDealCompanies()]);
+   }
+
+   async function updateReferral(referralId: string, properties: Record<string, any>) {
+@@ -225,7 +266,7 @@ function ReferralBuilderCard({ context, actions }: any) {
+       method: "PATCH",
+       body: { properties },
+     });
+-    actions?.addAlert?.({ type: "success", message: "Referral updated" });
++    actions?.addAlert?.({ type: "success", message: "Referral updated successfully" });
+     await loadReferrals();
+   }
+
+@@ -234,9 +275,11 @@ function ReferralBuilderCard({ context, actions }: any) {
+       setError(null);
+       if (!dealId) return;
+       try {
+-        setBusy(true);
+-        await Promise.all([loadReferrals(), loadPropertyDefinitions()]);
++        setInitialLoading(true);
++        await Promise.all([
++          loadReferrals(),
++          loadPropertyDefinitions(),
++          loadDealCompanies(),
++        ]);
+       } catch (e: any) {
+         setError(e?.message || "Failed to load data");
+       } finally {
+-        setBusy(false);
++        setInitialLoading(false);
+       }
+     })();
+@@ -247,33 +290,62 @@ function ReferralBuilderCard({ context, actions }: any) {
+   if (!dealId) {
+     return (
+       <Box>
+-        <Text>This card is meant to run on a Deal record.</Text>
++        <Alert title="Invalid Context" variant="error">
++          This card is meant to run on a Deal record.
++        </Alert>
+       </Box>
+     );
+   }
+
++  if (initialLoading) {
++    return (
++      <Flex direction="column" align="center" justify="center" gap="md">
++        <LoadingSpinner label="Loading Referral Builder..." />
++      </Flex>
++    );
++  }
++
+   return (
+-    <Flex direction="column" gap="md">
++    <Flex direction="column" gap="lg">
+       <Heading>Referral Builder</Heading>
+-      <Text>Deal ID: {dealId}</Text>
+
+-      {error ? <Text format={{ color: "red" }}>{error}</Text> : null}
++      <Flex direction="row" gap="sm" align="center">
++        <Text>Deal ID: {dealId}</Text>
++        {dealHasCompany && (
++          <Text format={{ fontWeight: "bold" }}>
++            | Company: {dealCompanies.map(c => c.name || c.id).join(", ")}
++          </Text>
++        )}
++      </Flex>
++
++      {error && (
++        <Alert title="Error" variant="error">
++          {error}
++        </Alert>
++      )}
+
+       <Divider />
+
+-      <Heading level="h4">Existing referrals</Heading>
+-      <Button
+-        variant="secondary"
+-        onClick={async () => {
+-          setError(null);
+-          try {
+-            setBusy(true);
+-            await loadReferrals();
+-          } catch (e: any) {
+-            setError(e?.message || "Reload failed");
+-          } finally {
+-            setBusy(false);
+-          }
+-        }}
+-      >
+-        Reload
+-      </Button>
++      {/* TWO-COLUMN LAYOUT */}
++      <Flex direction="row" gap="lg" wrap="wrap">
+
+-      {busy ? <Text>Loading…</Text> : null}
++        {/* LEFT COLUMN: CREATE FORM */}
++        <Box flex={1} style={{ minWidth: "300px" }}>
++          <Heading level="h3">Create Referral</Heading>
+
+-      {referrals.length === 0 ? (
+-        <Text>No referrals yet.</Text>
+-      ) : (
+-        <Flex direction="column" gap="sm">
+-          {referrals.map((r) => (
+-            // ... existing referral display ...
+-          ))}
+-        </Flex>
+-      )}
++          {/* Company search and selection */}
++          <Input
++            name="companyQuery"
++            label="Search company"
++            value={companyQuery}
++            onChange={(val: string) => setCompanyQuery(val)}
++            placeholder="Type a camp/company name..."
++          />
++          <Button
++            variant="secondary"
++            onClick={async () => {
++              setError(null);
++              try {
++                setBusy(true);
++                await searchCompanies();
++              } catch (e: any) {
++                setError(e?.message || "Search failed");
++              } finally {
++                setBusy(false);
++              }
++            }}
++            disabled={busy}
++          >
++            Search
++          </Button>
+
+-      <Divider />
++          <Select
++            name="company"
++            label="Company *"
++            options={companyOptions}
++            value={selectedCompanyId}
++            onChange={async (val: string) => {
++              setSelectedCompanyId(val);
++              setError(null);
++              try {
++                setBusy(true);
++                await loadPrograms(val);
++              } catch (e: any) {
++                setError(e?.message || "Failed to load programs");
++              } finally {
++                setBusy(false);
++              }
++            }}
++            required
++          />
+
+-      <Heading level="h4">Add referral</Heading>
++          {/* Association checkbox */}
++          {showAssociateCheckbox && (
++            <Checkbox
++              name="associateToDeal"
++              checked={associateToDeal}
++              onChange={(checked: boolean) => setAssociateToDeal(checked)}
++              label="Also associate this company to the deal"
++              description="This deal has no associated company. Check this to create the association."
++            />
++          )}
+
+-      <Input
+-        name="companyQuery"
+-        label="Search company"
+-        value={companyQuery}
+-        onChange={(val: string) => setCompanyQuery(val)}
+-        placeholder="Type a camp/company name..."
+-      />
+-      <Button variant="secondary" onClick={searchCompanies}>
+-        Search
+-      </Button>
++          {/* Program and Session selectors */}
++          <Select
++            name="program"
++            label="Program (optional)"
++            options={programOptions}
++            value={selectedProgramId}
++            onChange={async (val: string) => {
++              setSelectedProgramId(val);
++              setError(null);
++              try {
++                setBusy(true);
++                await loadSessions(val);
++              } catch (e: any) {
++                setError(e?.message || "Failed to load sessions");
++              } finally {
++                setBusy(false);
++              }
++            }}
++          />
+
+-      <Select
+-        name="company"
+-        label="Company"
+-        options={companyOptions}
+-        value={selectedCompanyId}
+-        onChange={async (val: string) => {
+-          setSelectedCompanyId(val);
+-          setError(null);
+-          try {
+-            setBusy(true);
+-            await loadPrograms(val);
+-          } catch (e: any) {
+-            setError(e?.message || "Failed to load programs");
+-          } finally {
+-            setBusy(false);
+-          }
+-        }}
+-      />
++          <Select
++            name="session"
++            label="Session (optional)"
++            options={sessionOptions}
++            value={selectedSessionId}
++            onChange={(val: string) => setSelectedSessionId(val)}
++          />
+
+-      <Select
+-        name="program"
+-        label="Program (optional)"
+-        options={programOptions}
+-        value={selectedProgramId}
+-        onChange={async (val: string) => {
+-          setSelectedProgramId(val);
+-          setError(null);
+-          try {
+-            setBusy(true);
+-            await loadSessions(val);
+-          } catch (e: any) {
+-            setError(e?.message || "Failed to load sessions");
+-          } finally {
+-            setBusy(false);
+-          }
+-        }}
+-      />
++          {/* Default selections for new referrals */}
++          <Select
++            name="outreachStatus"
++            label="Referral Status"
++            options={outreachOptions}
++            value={selectedOutreachStatus}
++            onChange={(val: string) => setSelectedOutreachStatus(val)}
++            description="Defaults to 'Ready to Send'"
++          />
+
+-      <Select
+-        name="session"
+-        label="Session (optional)"
+-        options={sessionOptions}
+-        value={selectedSessionId}
+-        onChange={(val: string) => setSelectedSessionId(val)}
+-      />
++          <Select
++            name="clientInterest"
++            label="Client Interest"
++            options={interestOptions}
++            value={selectedClientInterest}
++            onChange={(val: string) => setSelectedClientInterest(val)}
++            description="Defaults to 'Active / considering'"
++          />
+
+-      <TextArea
+-        name="note"
+-        label="Note to company"
+-        value={note}
+-        onChange={(val: string) => setNote(val)}
+-        placeholder="Optional note that will appear on the Referral record"
+-      />
++          <TextArea
++            name="note"
++            label="Note to company"
++            value={note}
++            onChange={(val: string) => setNote(val)}
++            placeholder="Optional note that will appear on the Referral record"
++          />
+
+-      <Button
+-        disabled={!canCreate || busy}
+-        onClick={async () => {
+-          setError(null);
+-          try {
+-            setBusy(true);
+-            await createReferral();
+-          } catch (e: any) {
+-            setError(e?.message || "Create failed");
+-          } finally {
+-            setBusy(false);
+-          }
+-        }}
+-      >
+-        Create referral
+-      </Button>
++          <Button
++            variant="primary"
++            disabled={!canCreate}
++            onClick={async () => {
++              setError(null);
++              try {
++                setBusy(true);
++                await createReferral();
++              } catch (e: any) {
++                setError(e?.message || "Create failed");
++              } finally {
++                setBusy(false);
++              }
++            }}
++          >
++            {busy ? "Creating..." : "Create Referral"}
++          </Button>
++        </Box>
++
++        {/* RIGHT COLUMN: EXISTING REFERRALS */}
++        <Box flex={1} style={{ minWidth: "300px" }}>
++          <Flex direction="row" justify="space-between" align="center">
++            <Heading level="h3">Existing Referrals</Heading>
++            <Button
++              size="small"
++              variant="secondary"
++              onClick={async () => {
++                setError(null);
++                try {
++                  setBusy(true);
++                  await loadReferrals();
++                } catch (e: any) {
++                  setError(e?.message || "Reload failed");
++                } finally {
++                  setBusy(false);
++                }
++              }}
++              disabled={busy}
++            >
++              Refresh
++            </Button>
++          </Flex>
++
++          {busy && <LoadingSpinner label="Loading..." size="small" />}
++
++          {!busy && referrals.length === 0 && (
++            <EmptyState
++              title="No referrals yet"
++              message="Create your first referral using the form on the left."
++            />
++          )}
++
++          {!busy && referrals.length > 0 && (
++            <Flex direction="column" gap="md">
++              {referrals.map((r) => (
++                <Box key={r.id} style={{ padding: "12px", border: "1px solid #e0e0e0", borderRadius: "4px" }}>
++                  <Flex direction="column" gap="sm">
++                    <Text format={{ fontWeight: "bold" }}>
++                      {r.company?.name || "Unknown Company"}
++                    </Text>
++
++                    <Text format={{ fontSize: "small" }}>
++                      Program: {r.program?.name || "N/A"}
++                    </Text>
++
++                    <Text format={{ fontSize: "small" }}>
++                      Session: {r.session?.name || "N/A"}
++                      {r.session?.startDate && ` (${r.session.startDate})`}
++                    </Text>
++
++                    {r.createdAt && (
++                      <Text format={{ fontSize: "small", color: "gray" }}>
++                        Created: {new Date(r.createdAt).toLocaleDateString()}
++                      </Text>
++                    )}
++
++                    <Select
++                      name={`outreach-${r.id}`}
++                      label="Status"
++                      options={outreachOptions}
++                      value={r.outreachStatus || ""}
++                      onChange={(val: string) => {
++                        setReferrals((prev) =>
++                          prev.map((x) =>
++                            x.id === r.id ? { ...x, outreachStatus: val } : x
++                          )
++                        );
++                      }}
++                    />
++
++                    <Select
++                      name={`interest-${r.id}`}
++                      label="Client Interest"
++                      options={interestOptions}
++                      value={r.clientInterest || ""}
++                      onChange={(val: string) => {
++                        setReferrals((prev) =>
++                          prev.map((x) =>
++                            x.id === r.id ? { ...x, clientInterest: val } : x
++                          )
++                        );
++                      }}
++                    />
++
++                    <TextArea
++                      name={`note-${r.id}`}
++                      label="Note"
++                      value={r.note || ""}
++                      onChange={(val: string) => {
++                        setReferrals((prev) =>
++                          prev.map((x) => (x.id === r.id ? { ...x, note: val } : x))
++                        );
++                      }}
++                    />
++
++                    <Button
++                      size="small"
++                      onClick={async () => {
++                        setError(null);
++                        try {
++                          setBusy(true);
++                          await updateReferral(r.id, {
++                            referral_status: r.outreachStatus || "",
++                            client_interest: r.clientInterest || "",
++                            referral_note_to_company: r.note || "",
++                          });
++                        } catch (e: any) {
++                          setError(e?.message || "Update failed");
++                        } finally {
++                          setBusy(false);
++                        }
++                      }}
++                      disabled={busy}
++                    >
++                      Save Changes
++                    </Button>
++                  </Flex>
++                </Box>
++              ))}
++            </Flex>
++          )}
++        </Box>
++      </Flex>
+     </Flex>
+   );
+ }
