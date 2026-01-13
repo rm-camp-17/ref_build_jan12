@@ -1,168 +1,156 @@
+/**
+ * POST /api/referrals - Create or update a referral
+ *
+ * This endpoint uses the CreateReferralWorkflow for:
+ * - Input validation
+ * - Canonical payload building with defaults
+ * - Upsert logic (create or update based on referral_key)
+ * - Idempotent association creation
+ * - Structured error handling
+ *
+ * Request body:
+ * {
+ *   dealId: string (required)
+ *   companyId: string (required)
+ *   programId?: string
+ *   sessionId?: string
+ *   note?: string
+ *   outreachStatus?: string (internal value, e.g., "ready_to_send")
+ *   clientInterest?: string (internal value, e.g., "active_considering")
+ *   associateDealToCompany?: boolean
+ * }
+ *
+ * Response:
+ * {
+ *   ok: boolean
+ *   referralId?: string
+ *   created?: boolean
+ *   updated?: boolean
+ *   associationsCreated?: number
+ *   associationsFailed?: number
+ *   dealCompanyAssociated?: boolean
+ *   errors?: string[]
+ *   validationErrors?: string[]
+ * }
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
-import { hubspotClient } from '@/lib/hubspot';
-import { config } from '@/lib/config';
-import { createAssociation, getAssociationTypeId } from '@/lib/associations';
+import { createReferralWorkflow } from '@/lib/workflow';
+
+// ============================================================================
+// Request Handling Utilities
+// ============================================================================
+
+/**
+ * Extract HubSpot error details for user-friendly messages
+ */
+function extractHubSpotError(error: any): string {
+  // HubSpot SDK errors often have nested structure
+  if (error?.body?.message) {
+    return error.body.message;
+  }
+  if (error?.response?.body?.message) {
+    return error.response.body.message;
+  }
+  if (error?.message) {
+    return error.message;
+  }
+  return 'Unknown error occurred';
+}
+
+/**
+ * Create error response with consistent format
+ */
+function errorResponse(
+  message: string,
+  status: number,
+  details?: { validationErrors?: string[]; errors?: string[] }
+): NextResponse {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: message,
+      ...details,
+    },
+    { status }
+  );
+}
+
+// ============================================================================
+// Route Handler
+// ============================================================================
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  let body: unknown;
 
-  const {
-    dealId,
-    companyId,
-    programId,
-    sessionId,
-    note,
-    outreachStatus,     // ✅ REQUIRED - internal value
-    clientInterest,     // ✅ REQUIRED - internal value
-    associateToDeal,    // ✅ NEW FLAG - create Deal↔Company association
-  } = body;
-
-  // Validation
-  if (!dealId || !companyId) {
-    return NextResponse.json(
-      { error: 'dealId and companyId are required' },
-      { status: 400 }
-    );
-  }
-
-  if (!outreachStatus || !clientInterest) {
-    return NextResponse.json(
-      { error: 'outreachStatus and clientInterest are required' },
-      { status: 400 }
-    );
-  }
-
-  // Build referral properties
-  const referralKey = `${dealId}-${companyId}`;
-  const properties: Record<string, any> = {
-    [config.properties.referral.key]: referralKey,
-    [config.properties.referral.outreach]: outreachStatus,   // Use internal value
-    [config.properties.referral.interest]: clientInterest,   // Use internal value
-    [config.properties.referral.note]: note || '',
-    [config.properties.referral.name]: `Referral for Deal ${dealId}`,
-  };
-
-  let referralId: string;
-  let created = false;
-
+  // Parse request body
   try {
-    // Step 1: Search for existing referral by key (upsert logic)
-    const searchResults = await hubspotClient.crm.objects.searchApi.doSearch(
-      config.objectTypes.referral,
-      {
-        filterGroups: [
-          {
-            filters: [
-              {
-                propertyName: config.properties.referral.key,
-                operator: 'EQ',
-                value: referralKey,
-              },
-            ],
-          },
-        ],
-        limit: 1,
-      }
-    );
-
-    if (searchResults.results.length > 0) {
-      // Update existing referral
-      referralId = searchResults.results[0].id;
-      await hubspotClient.crm.objects.basicApi.update(
-        config.objectTypes.referral,
-        referralId,
-        { properties }
-      );
-      created = false;
-      console.log(`✓ Updated referral: ${referralId}`);
-    } else {
-      // Create new referral
-      const createResult = await hubspotClient.crm.objects.basicApi.create(
-        config.objectTypes.referral,
-        { properties }
-      );
-      referralId = createResult.id;
-      created = true;
-      console.log(`✓ Created referral: ${referralId}`);
-    }
-  } catch (error: any) {
-    console.error('Failed to create/update referral:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to create referral' },
-      { status: 500 }
-    );
+    body = await req.json();
+  } catch (error) {
+    return errorResponse('Invalid JSON in request body', 400);
   }
 
-  // Step 2: Create associations to Deal, Company, Program, Session
-  try {
-    const associationsToCreate: Array<{
-      toType: string;
-      toId: string;
-    }> = [
-      { toType: 'deals', toId: dealId },
-      { toType: 'companies', toId: companyId },
-    ];
-
-    if (programId) {
-      associationsToCreate.push({
-        toType: config.objectTypes.program,
-        toId: programId,
-      });
-    }
-
-    if (sessionId) {
-      associationsToCreate.push({
-        toType: config.objectTypes.session,
-        toId: sessionId,
-      });
-    }
-
-    for (const assoc of associationsToCreate) {
-      await createAssociation(
-        referralId,
-        config.objectTypes.referral,
-        assoc.toId,
-        assoc.toType
-      );
-    }
-  } catch (error: any) {
-    console.error('Failed to create associations:', error);
-    // Don't fail the entire request if associations fail
-  }
-
-  // Step 3: ✅ NEW - Create Deal↔Company association if requested
-  if (associateToDeal === true) {
-    try {
-      const dealToCompanyTypeId = await getAssociationTypeId(
-        'deals',
-        'companies'
-      );
-
-      await hubspotClient.crm.associations.batchApi.create({
-        inputs: [
-          {
-            from: { id: dealId },
-            to: { id: companyId },
-            types: [
-              {
-                associationCategory: 'HUBSPOT_DEFINED',
-                associationTypeId: dealToCompanyTypeId,
-              },
-            ],
-          },
-        ],
-      });
-      console.log(`✓ Created Deal↔Company association: ${dealId} ↔ ${companyId}`);
-    } catch (error: any) {
-      console.error('Failed to create Deal↔Company association:', error);
-      // Don't fail the entire request
-    }
-  }
-
-  return NextResponse.json({
-    ok: true,
-    referralId,
-    created,
-    updated: !created,
+  // Log request (without sensitive data)
+  console.log('[POST /api/referrals] Request received:', {
+    dealId: (body as any)?.dealId,
+    companyId: (body as any)?.companyId,
+    programId: (body as any)?.programId,
+    sessionId: (body as any)?.sessionId,
+    hasNote: !!(body as any)?.note,
+    outreachStatus: (body as any)?.outreachStatus,
+    clientInterest: (body as any)?.clientInterest,
+    associateDealToCompany: (body as any)?.associateDealToCompany,
   });
+
+  try {
+    // Execute workflow
+    const result = await createReferralWorkflow(body);
+
+    if (!result.success) {
+      // Validation failed
+      if (result.validationErrors) {
+        return errorResponse(
+          'Validation failed',
+          400,
+          { validationErrors: result.validationErrors }
+        );
+      }
+
+      // Other workflow errors
+      return errorResponse(
+        result.errors?.[0] || 'Failed to create referral',
+        500,
+        { errors: result.errors }
+      );
+    }
+
+    // Success response
+    const response = {
+      ok: true,
+      referralId: result.referralId,
+      created: result.created,
+      updated: result.updated,
+      associationsCreated: result.associationsCreated,
+      associationsFailed: result.associationsFailed,
+      dealCompanyAssociated: result.dealCompanyAssociated,
+    };
+
+    // Include non-critical errors if any
+    if (result.errors && result.errors.length > 0) {
+      (response as any).warnings = result.errors;
+    }
+
+    console.log('[POST /api/referrals] Success:', response);
+    return NextResponse.json(response);
+  } catch (error: any) {
+    // Unexpected errors
+    const errorMessage = extractHubSpotError(error);
+    console.error('[POST /api/referrals] Unexpected error:', errorMessage);
+
+    return errorResponse(
+      `Server error: ${errorMessage}`,
+      500,
+      { errors: [errorMessage] }
+    );
+  }
 }

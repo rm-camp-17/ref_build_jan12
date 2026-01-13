@@ -1,8 +1,22 @@
+/**
+ * GET /api/companies/:companyId/programs - Get programs for a company
+ *
+ * Fetches all programs associated with the specified company.
+ *
+ * HubSpot SDK v11.x compatible with correct API signatures.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { hubspotClient } from '@/lib/hubspot';
 import { config } from '@/lib/config';
+import { getAssociatedIds } from '@/lib/associations';
 
 type Params = { companyId: string };
+
+interface ProgramData {
+  id: string;
+  name: string;
+}
 
 export async function GET(
   req: NextRequest,
@@ -10,50 +24,51 @@ export async function GET(
 ) {
   const { companyId } = params;
 
-  if (!companyId) {
+  if (!companyId || !/^\d+$/.test(companyId)) {
     return NextResponse.json(
-      { error: 'Company ID is required' },
+      { error: 'Valid Company ID is required' },
       { status: 400 }
     );
   }
 
   try {
-    // Fetch programs associated with this company
-    const associationsResult = await hubspotClient.crm.associations.batchApi.read(
-      'companies',
-      config.objectTypes.program,
-      { inputs: [{ id: companyId }] }
-    );
+    // Get program IDs associated with company using v4 API
+    const programIds = await getAssociatedIds('companies', companyId, config.objectTypes.program);
 
-    if (
-      associationsResult.results.length === 0 ||
-      !associationsResult.results[0].to
-    ) {
+    if (programIds.length === 0) {
       return NextResponse.json({ results: [] });
     }
 
-    const programIds = associationsResult.results[0].to.map(
-      (assoc: any) => assoc.toObjectId
-    );
-
     // Fetch program details
-    const programs = await Promise.all(
+    const programs: ProgramData[] = await Promise.all(
       programIds.map(async (programId: string) => {
-        const program = await hubspotClient.crm.objects.basicApi.getById(
-          config.objectTypes.program,
-          programId,
-          ['name']
-        );
-        return {
-          id: program.id,
-          name: program.properties.name || 'Unnamed Program',
-        };
+        try {
+          const program = await hubspotClient.crm.objects.basicApi.getById(
+            config.objectTypes.program,
+            programId,
+            [config.properties.program.name]
+          );
+          return {
+            id: program.id,
+            name: program.properties[config.properties.program.name] || 'Unnamed Program',
+          };
+        } catch (e: any) {
+          console.warn(`[programs] Failed to fetch program ${programId}:`, e.message);
+          return {
+            id: programId,
+            name: `Program ${programId}`,
+          };
+        }
       })
     );
 
+    // Sort by name
+    programs.sort((a, b) => a.name.localeCompare(b.name));
+
+    console.log(`[GET /api/companies/${companyId}/programs] Found ${programs.length} programs`);
     return NextResponse.json({ results: programs });
   } catch (error: any) {
-    console.error('Failed to fetch programs:', error);
+    console.error('[GET /api/companies/*/programs] Error:', error.message);
     return NextResponse.json(
       { error: error.message || 'Failed to fetch programs' },
       { status: 500 }
