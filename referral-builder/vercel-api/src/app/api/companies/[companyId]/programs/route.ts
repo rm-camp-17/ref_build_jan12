@@ -19,11 +19,11 @@ export async function GET(
 
   try {
     // Fetch programs associated with this company
-    const associationsResult = await hubspotClient.crm.associations.batchApi.read({
-      inputs: [{ id: companyId }],
-      fromObjectType: 'companies',
-      toObjectType: config.objectTypes.program,
-    });
+    const associationsResult = await hubspotClient.crm.associations.batchApi.read(
+      'companies',
+      config.objectTypes.program,
+      { inputs: [{ id: companyId }] }
+    );
 
     if (
       associationsResult.results.length === 0 ||
