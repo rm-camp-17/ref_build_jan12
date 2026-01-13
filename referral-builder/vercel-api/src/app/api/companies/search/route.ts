@@ -1,14 +1,27 @@
+/**
+ * GET /api/companies/search?q={query} - Search companies by name
+ *
+ * Searches for companies matching the query string.
+ *
+ * HubSpot SDK v11.x compatible.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { hubspotClient } from '@/lib/hubspot';
 
+interface CompanyData {
+  id: string;
+  name: string;
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const query = searchParams.get('q') || '';
-  const limit = parseInt(searchParams.get('limit') || '20', 10);
+  const query = searchParams.get('q')?.trim();
+  const limit = Math.min(parseInt(searchParams.get('limit') || '50', 10), 100);
 
-  if (!query) {
+  if (!query || query.length < 2) {
     return NextResponse.json(
-      { error: 'Query parameter "q" is required' },
+      { error: 'Search query must be at least 2 characters' },
       { status: 400 }
     );
   }
@@ -20,25 +33,27 @@ export async function GET(req: NextRequest) {
           filters: [
             {
               propertyName: 'name',
-              operator: 'CONTAINS_TOKEN',
+              operator: 'CONTAINS_TOKEN' as any,
               value: query,
             },
           ],
         },
       ],
       properties: ['name'],
+      sorts: ['name'],
+      after: '0',
       limit,
-      sorts: [{ propertyName: 'name', direction: 'ASCENDING' }],
     });
 
-    const results = searchResults.results.map((company) => ({
+    const results: CompanyData[] = (searchResults.results || []).map((company: any) => ({
       id: company.id,
-      name: company.properties.name || 'Unnamed Company',
+      name: company.properties.name || `Company ${company.id}`,
     }));
 
+    console.log(`[GET /api/companies/search?q=${query}] Found ${results.length} companies`);
     return NextResponse.json({ results });
   } catch (error: any) {
-    console.error('Company search failed:', error);
+    console.error('[GET /api/companies/search] Error:', error.message);
     return NextResponse.json(
       { error: error.message || 'Failed to search companies' },
       { status: 500 }

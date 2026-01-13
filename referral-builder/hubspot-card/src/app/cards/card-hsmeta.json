@@ -3,11 +3,9 @@
   "type": "card",
   "config": {
     "name": "Referral Builder",
-    "description": "Create and update referrals for this Deal.",
+    "description": "Create and manage referrals for this Deal.",
     "location": "crm.record.sidebar",
     "entrypoint": "/app/cards/ReferralBuilderCard.tsx",
-    "objectTypes": [
-      "deals"
-    ]
+    "objectTypes": ["deals"]
   }
 }
