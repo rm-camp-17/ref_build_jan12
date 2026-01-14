@@ -83,10 +83,29 @@ function errorResponse(
 export async function POST(req: NextRequest) {
   let body: unknown;
 
+  // Debug: Log headers and content type
+  console.log('[POST /api/referrals] Headers:', {
+    contentType: req.headers.get('content-type'),
+    contentLength: req.headers.get('content-length'),
+    userAgent: req.headers.get('user-agent'),
+  });
+
   // Parse request body
   try {
     body = await req.json();
-  } catch (error) {
+    console.log('[POST /api/referrals] Body parsed successfully, type:', typeof body);
+  } catch (error: any) {
+    console.error('[POST /api/referrals] JSON parse failed:', error.message);
+
+    // Try to read raw body for debugging
+    try {
+      const clone = req.clone();
+      const text = await clone.text();
+      console.log('[POST /api/referrals] Raw body:', text.substring(0, 200));
+    } catch (e) {
+      console.error('[POST /api/referrals] Could not read raw body');
+    }
+
     return errorResponse('Invalid JSON in request body', 400);
   }
 
