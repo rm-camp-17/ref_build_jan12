@@ -34,27 +34,29 @@ import {
 const API_BASE = "https://referral-builder1122026.vercel.app";
 
 // Default enum values (must match backend defaults)
+// NOTE: HubSpot properties use labels as values (non-standard but configured this way)
 const DEFAULTS = {
-  REFERRAL_STATUS: "ready_to_send",
-  CLIENT_INTEREST: "active_considering",
+  REFERRAL_STATUS: "Ready to Send",
+  CLIENT_INTEREST: "Active / considering",
 } as const;
 
 // Fallback options if API fails to load property definitions
+// NOTE: HubSpot uses labels as internal values for this installation
 const FALLBACK_STATUS_OPTIONS: Option[] = [
-  { label: "Draft", value: "draft" },
-  { label: "Ready to Send", value: "ready_to_send" },
-  { label: "Sent", value: "sent" },
-  { label: "Resend", value: "resend" },
-  { label: "Don't send (already sent)", value: "dont_send" },
+  { label: "Draft", value: "Draft" },
+  { label: "Ready to Send", value: "Ready to Send" },
+  { label: "Sent", value: "Sent" },
+  { label: "Resend", value: "Resend" },
+  { label: "Don't send (already sent)", value: "Don't send (already sent)" },
 ];
 
 const FALLBACK_INTEREST_OPTIONS: Option[] = [
-  { label: "Active / considering", value: "active_considering" },
-  { label: "Shortlist", value: "shortlist" },
-  { label: "Neutral", value: "neutral" },
-  { label: "Unlikely", value: "unlikely" },
-  { label: "Declined", value: "declined" },
-  { label: "Selected", value: "selected" },
+  { label: "Active / considering", value: "Active / considering" },
+  { label: "Shortlist", value: "Shortlist" },
+  { label: "Neutral", value: "Neutral" },
+  { label: "Unlikely", value: "Unlikely" },
+  { label: "Declined", value: "Declined" },
+  { label: "Selected", value: "Selected" },
 ];
 
 // ============================================================================

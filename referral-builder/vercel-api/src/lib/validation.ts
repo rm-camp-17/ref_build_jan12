@@ -36,30 +36,12 @@ export interface ReferralPayload {
 // ============================================================================
 
 export const DEFAULTS = {
-  // Referral status default: "Ready to send"
-  REFERRAL_STATUS: 'ready_to_send',
+  // Referral status default: "Ready to Send"
+  // NOTE: HubSpot properties use labels as values (e.g., "Ready to Send" not "ready_to_send")
+  REFERRAL_STATUS: 'Ready to Send',
   // Client interest default: "Active / considering"
-  CLIENT_INTEREST: 'active_considering',
+  CLIENT_INTEREST: 'Active / considering',
 } as const;
-
-// Valid internal values for enumeration properties
-// These should match what's configured in HubSpot
-export const VALID_STATUS_VALUES = [
-  'draft',
-  'ready_to_send',
-  'sent',
-  'resend',
-  'dont_send',
-] as const;
-
-export const VALID_INTEREST_VALUES = [
-  'active_considering',
-  'shortlist',
-  'neutral',
-  'unlikely',
-  'declined',
-  'selected',
-] as const;
 
 // ============================================================================
 // Validation Functions
@@ -73,14 +55,6 @@ function isValidObjectId(id: unknown): id is string {
   if (!id.trim()) return false;
   // HubSpot IDs are numeric
   return /^\d+$/.test(id.trim());
-}
-
-/**
- * Validate an enumeration value
- */
-function isValidEnumValue(value: unknown, validValues: readonly string[]): boolean {
-  if (typeof value !== 'string') return false;
-  return validValues.includes(value);
 }
 
 /**
@@ -120,22 +94,9 @@ export function validateCreateReferralInput(
     }
   }
 
-  // Validate enum fields if provided (otherwise defaults will be used)
-  if (data.outreachStatus !== undefined && data.outreachStatus !== null && data.outreachStatus !== '') {
-    if (!isValidEnumValue(data.outreachStatus, VALID_STATUS_VALUES)) {
-      errors.push(
-        `outreachStatus must be one of: ${VALID_STATUS_VALUES.join(', ')}`
-      );
-    }
-  }
-
-  if (data.clientInterest !== undefined && data.clientInterest !== null && data.clientInterest !== '') {
-    if (!isValidEnumValue(data.clientInterest, VALID_INTEREST_VALUES)) {
-      errors.push(
-        `clientInterest must be one of: ${VALID_INTEREST_VALUES.join(', ')}`
-      );
-    }
-  }
+  // Enum fields: Accept any string value
+  // HubSpot will validate against its configured options when creating/updating
+  // We don't validate enum values here because they can vary (labels vs internal values)
 
   // Note is optional, sanitize if provided
   const note = typeof data.note === 'string' ? data.note.trim() : '';
@@ -219,22 +180,14 @@ export function validateUpdateReferralInput(
   const interestProp = config.properties.referral.interest;
   const noteProp = config.properties.referral.note;
 
+  // Accept any string values for enum properties
+  // HubSpot will validate against its configured options
   if (props[statusProp] !== undefined) {
-    const val = String(props[statusProp]);
-    if (val && !isValidEnumValue(val, VALID_STATUS_VALUES)) {
-      errors.push(`${statusProp} must be one of: ${VALID_STATUS_VALUES.join(', ')}`);
-    } else {
-      cleanedProps[statusProp] = val;
-    }
+    cleanedProps[statusProp] = String(props[statusProp]);
   }
 
   if (props[interestProp] !== undefined) {
-    const val = String(props[interestProp]);
-    if (val && !isValidEnumValue(val, VALID_INTEREST_VALUES)) {
-      errors.push(`${interestProp} must be one of: ${VALID_INTEREST_VALUES.join(', ')}`);
-    } else {
-      cleanedProps[interestProp] = val;
-    }
+    cleanedProps[interestProp] = String(props[interestProp]);
   }
 
   if (props[noteProp] !== undefined) {
