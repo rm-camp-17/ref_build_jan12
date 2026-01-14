@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "cd referral-builder/vercel-api && npm run build",
+  "devCommand": "cd referral-builder/vercel-api && npm run dev",
+  "installCommand": "cd referral-builder/vercel-api && npm install",
+  "outputDirectory": "referral-builder/vercel-api/.next",
+  "framework": "nextjs"
+}

@@ -28,12 +28,12 @@ export const config = {
       key: process.env.HS_REFERRAL_KEY_PROP || 'referral_key',
       // Display name
       name: process.env.HS_REFERRAL_NAME_PROP || 'referral_name',
-      // Status dropdown (enum)
-      outreach: process.env.HS_REFERRAL_OUTREACH_PROP || 'referral_status',
-      // Interest dropdown (enum)
-      interest: process.env.HS_REFERRAL_INTEREST_PROP || 'client_interest',
-      // Note to company
-      note: process.env.HS_REFERRAL_NOTE_PROP || 'referral_note_to_company',
+      // Status dropdown (enum) - matches HubSpot property name
+      outreach: process.env.HS_REFERRAL_OUTREACH_PROP || 'referral_outreach_status_enumeration',
+      // Interest dropdown (enum) - matches HubSpot property name
+      interest: process.env.HS_REFERRAL_INTEREST_PROP || 'referral_client_interest_enumeration',
+      // Note to company - matches HubSpot property name
+      note: process.env.HS_REFERRAL_NOTE_PROP || 'referral_note',
       // Previously sent checkbox
       previouslySent: process.env.HS_REFERRAL_PREVIOUSLY_SENT_PROP || 'previously_sent_to_camp',
       // Copied from deal key
