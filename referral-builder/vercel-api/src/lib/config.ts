@@ -18,7 +18,7 @@ export const config = {
   objectTypes: {
     program: process.env.HS_PROGRAM_OBJECT_TYPE || 'p_program',
     session: process.env.HS_SESSION_OBJECT_TYPE || 'p_session',
-    referral: process.env.HS_REFERRAL_OBJECT_TYPE || 'p_referral',
+    referral: process.env.HS_REFERRAL_OBJECT_TYPE || '2-55790899',
   },
 
   // Property internal names by object type
@@ -28,12 +28,12 @@ export const config = {
       key: process.env.HS_REFERRAL_KEY_PROP || 'referral_key',
       // Display name
       name: process.env.HS_REFERRAL_NAME_PROP || 'referral_name',
-      // Status dropdown (enum) - matches HubSpot property name
-      outreach: process.env.HS_REFERRAL_OUTREACH_PROP || 'referral_outreach_status_enumeration',
-      // Interest dropdown (enum) - matches HubSpot property name
-      interest: process.env.HS_REFERRAL_INTEREST_PROP || 'referral_client_interest_enumeration',
-      // Note to company - matches HubSpot property name
-      note: process.env.HS_REFERRAL_NOTE_PROP || 'referral_note',
+      // Status dropdown (enum) - property name: referral_status, label: referral_outreach_status
+      outreach: process.env.HS_REFERRAL_OUTREACH_PROP || 'referral_status',
+      // Interest dropdown (enum) - property name: client_interest, label: referral_client_interest
+      interest: process.env.HS_REFERRAL_INTEREST_PROP || 'client_interest',
+      // Note to company
+      note: process.env.HS_REFERRAL_NOTE_PROP || 'referral_note_to_company',
       // Previously sent checkbox
       previouslySent: process.env.HS_REFERRAL_PREVIOUSLY_SENT_PROP || 'previously_sent_to_camp',
       // Copied from deal key
