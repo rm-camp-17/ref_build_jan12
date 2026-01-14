@@ -792,9 +792,9 @@ function ReferralCard({
     setSaving(true);
     try {
       await onUpdate(referral.id, {
-        referral_status: localStatus,
-        client_interest: localInterest,
-        referral_note_to_company: localNote,
+        referral_outreach_status_enumeration: localStatus,
+        referral_client_interest_enumeration: localInterest,
+        referral_note: localNote,
       });
     } finally {
       setSaving(false);
