@@ -13,10 +13,14 @@ export interface CreateReferralInput {
   dealId: string;
   companyId: string;
   programId?: string;
-  sessionId?: string;
+  sessionId?: string;           // Single session for backwards compatibility
+  sessionIds?: string[];        // Multiple sessions support
+  selectedBillingSessionId?: string; // The session to use for billing (when clientInterest == "Selected")
   note?: string;
   outreachStatus?: string;
   clientInterest?: string;
+  copiedFromDealKey?: string;   // Set only if copied from prior-year deal
+  copiedFromYear?: number;      // Set only if copiedFromDealKey is set
   associateDealToCompany?: boolean;
 }
 
@@ -88,9 +92,49 @@ export function validateCreateReferralInput(
     }
   }
 
+  // Support both single sessionId and sessionIds array
   if (data.sessionId !== undefined && data.sessionId !== null && data.sessionId !== '') {
     if (!isValidObjectId(data.sessionId)) {
       errors.push('sessionId must be a valid HubSpot ID if provided');
+    }
+  }
+
+  // Validate sessionIds array if provided
+  let sessionIds: string[] = [];
+  if (Array.isArray(data.sessionIds)) {
+    for (const sid of data.sessionIds) {
+      if (sid && !isValidObjectId(sid)) {
+        errors.push(`sessionIds contains invalid HubSpot ID: ${sid}`);
+      } else if (sid) {
+        sessionIds.push(String(sid).trim());
+      }
+    }
+  }
+  // If single sessionId provided but not in sessionIds, add it
+  if (data.sessionId && isValidObjectId(data.sessionId)) {
+    const singleId = String(data.sessionId).trim();
+    if (!sessionIds.includes(singleId)) {
+      sessionIds.push(singleId);
+    }
+  }
+
+  // Validate selectedBillingSessionId if provided
+  if (data.selectedBillingSessionId !== undefined && data.selectedBillingSessionId !== null && data.selectedBillingSessionId !== '') {
+    if (!isValidObjectId(data.selectedBillingSessionId)) {
+      errors.push('selectedBillingSessionId must be a valid HubSpot ID if provided');
+    }
+  }
+
+  // Validate copied fields - copiedFromYear only valid if copiedFromDealKey is set
+  let copiedFromDealKey: string | undefined;
+  let copiedFromYear: number | undefined;
+  if (data.copiedFromDealKey && typeof data.copiedFromDealKey === 'string') {
+    copiedFromDealKey = data.copiedFromDealKey.trim();
+    if (data.copiedFromYear !== undefined && data.copiedFromYear !== null) {
+      const year = Number(data.copiedFromYear);
+      if (!isNaN(year) && year > 2000 && year < 2100) {
+        copiedFromYear = year;
+      }
     }
   }
 
@@ -114,9 +158,13 @@ export function validateCreateReferralInput(
     companyId: String(data.companyId).trim(),
     programId: data.programId ? String(data.programId).trim() : undefined,
     sessionId: data.sessionId ? String(data.sessionId).trim() : undefined,
+    sessionIds: sessionIds.length > 0 ? sessionIds : undefined,
+    selectedBillingSessionId: data.selectedBillingSessionId ? String(data.selectedBillingSessionId).trim() : undefined,
     note: note || undefined,
     outreachStatus: data.outreachStatus ? String(data.outreachStatus) : undefined,
     clientInterest: data.clientInterest ? String(data.clientInterest) : undefined,
+    copiedFromDealKey,
+    copiedFromYear,
     associateDealToCompany,
   };
 
@@ -130,6 +178,10 @@ export function validateCreateReferralInput(
 /**
  * Build canonical Referral create payload
  * Uses internal property names and applies defaults
+ *
+ * NOTE: This builds the base properties. Additional computed properties
+ * (company_name, hubspot_owner_id, resend_requested, selected_session_*)
+ * are added by the workflow after fetching related data.
  */
 export function buildReferralPayload(input: CreateReferralInput): ReferralPayload {
   const referralKey = `${input.dealId}-${input.companyId}`;
@@ -147,6 +199,14 @@ export function buildReferralPayload(input: CreateReferralInput): ReferralPayloa
     // Note (empty string if not provided)
     [config.properties.referral.note]: input.note || '',
   };
+
+  // Add copied_from fields only if copied from prior-year deal
+  if (input.copiedFromDealKey) {
+    properties[config.properties.referral.copiedDealKey] = input.copiedFromDealKey;
+    if (input.copiedFromYear) {
+      properties[config.properties.referral.copiedYear] = String(input.copiedFromYear);
+    }
+  }
 
   return {
     properties,

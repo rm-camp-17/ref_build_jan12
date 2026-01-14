@@ -15,6 +15,7 @@ export interface AssociationSpec {
   fromType: string;
   toId: string;
   toType: string;
+  label?: string; // Optional association label (e.g., "Selected_Referral" for selected session)
 }
 
 export interface AssociationResult {
@@ -33,13 +34,18 @@ export interface BatchAssociationResult {
 // Cache for Association Type IDs
 // ============================================================================
 
-const associationTypeCache: Map<string, number> = new Map();
+interface AssociationTypeInfo {
+  typeId: number;
+  category: 'HUBSPOT_DEFINED' | 'USER_DEFINED';
+}
+
+const associationTypeCache: Map<string, AssociationTypeInfo> = new Map();
 
 /**
  * Get cache key for association type lookup
  */
-function getCacheKey(fromType: string, toType: string): string {
-  return `${fromType}:${toType}`;
+function getCacheKey(fromType: string, toType: string, label?: string): string {
+  return label ? `${fromType}:${toType}:${label}` : `${fromType}:${toType}`;
 }
 
 // ============================================================================
@@ -52,13 +58,15 @@ function getCacheKey(fromType: string, toType: string): string {
  *
  * @param fromObjectType - Source object type (e.g., 'deals', 'p_referral')
  * @param toObjectType - Target object type (e.g., 'companies', 'p_program')
- * @returns Association type ID
+ * @param label - Optional association label to look up (e.g., "Selected_Referral")
+ * @returns Association type info (typeId and category)
  */
 export async function getAssociationTypeId(
   fromObjectType: string,
-  toObjectType: string
-): Promise<number> {
-  const cacheKey = getCacheKey(fromObjectType, toObjectType);
+  toObjectType: string,
+  label?: string
+): Promise<AssociationTypeInfo> {
+  const cacheKey = getCacheKey(fromObjectType, toObjectType, label);
 
   // Return cached value if exists
   const cached = associationTypeCache.get(cacheKey);
@@ -79,15 +87,36 @@ export async function getAssociationTypeId(
       );
     }
 
-    // Use the first (default) association type
-    // For custom labels, add a label parameter and search for it
-    const typeId = types.results[0].typeId;
+    let selectedType: any;
+
+    if (label) {
+      // Find the association type with the matching label
+      selectedType = types.results.find((t: any) => t.label === label);
+      if (!selectedType) {
+        console.warn(
+          `[associations] Label "${label}" not found for ${fromObjectType} → ${toObjectType}, available labels:`,
+          types.results.map((t: any) => t.label).filter(Boolean)
+        );
+        // Fall back to default (first) type
+        selectedType = types.results[0];
+      }
+    } else {
+      // Use the first (default) association type
+      selectedType = types.results[0];
+    }
+
+    const result: AssociationTypeInfo = {
+      typeId: selectedType.typeId,
+      category: selectedType.category || 'HUBSPOT_DEFINED',
+    };
 
     // Cache and return
-    associationTypeCache.set(cacheKey, typeId);
-    console.log(`[associations] Cached type ID: ${fromObjectType} → ${toObjectType} = ${typeId}`);
+    associationTypeCache.set(cacheKey, result);
+    console.log(
+      `[associations] Cached type: ${fromObjectType} → ${toObjectType}${label ? ` (${label})` : ''} = ${result.typeId} (${result.category})`
+    );
 
-    return typeId;
+    return result;
   } catch (error: any) {
     console.error(
       `[associations] Failed to get association type ID for ${fromObjectType} → ${toObjectType}:`,
@@ -153,23 +182,24 @@ export async function associationExists(
 export async function createAssociationIdempotent(
   spec: AssociationSpec
 ): Promise<AssociationResult> {
-  const { fromId, fromType, toId, toType } = spec;
+  const { fromId, fromType, toId, toType, label } = spec;
 
   try {
     // First check if association already exists
+    // Note: This checks for any association, not specifically labeled ones
     const exists = await associationExists(fromType, fromId, toType, toId);
-    if (exists) {
+    if (exists && !label) {
+      // For unlabeled associations, skip if already exists
       console.log(
         `[associations] Association already exists: ${fromType}:${fromId} → ${toType}:${toId}`
       );
       return { success: true, alreadyExists: true };
     }
 
-    // Get association type ID
-    const typeId = await getAssociationTypeId(fromType, toType);
+    // Get association type info (typeId and category)
+    const typeInfo = await getAssociationTypeId(fromType, toType, label);
 
     // Create association using v4 batch API (correct for SDK v11.x)
-    // Use type assertion for the enum value
     await hubspotClient.crm.associations.v4.batchApi.create(
       fromType,
       toType,
@@ -180,8 +210,8 @@ export async function createAssociationIdempotent(
             to: { id: toId },
             types: [
               {
-                associationCategory: 'HUBSPOT_DEFINED' as any,
-                associationTypeId: typeId,
+                associationCategory: typeInfo.category as any,
+                associationTypeId: typeInfo.typeId,
               },
             ],
           },
@@ -190,17 +220,20 @@ export async function createAssociationIdempotent(
     );
 
     console.log(
-      `[associations] Created: ${fromType}:${fromId} → ${toType}:${toId}`
+      `[associations] Created: ${fromType}:${fromId} → ${toType}:${toId}${label ? ` (label: ${label})` : ''}`
     );
     return { success: true, alreadyExists: false };
   } catch (error: any) {
+    // Log correlation ID if available
+    const correlationId = error?.body?.correlationId || error?.response?.body?.correlationId;
     console.error(
       `[associations] Failed to create: ${fromType}:${fromId} → ${toType}:${toId}:`,
-      error.message
+      error.message,
+      correlationId ? `(correlationId: ${correlationId})` : ''
     );
     return {
       success: false,
-      error: `Failed to associate ${fromType} → ${toType}: ${error.message}`,
+      error: `Failed to associate ${fromType} → ${toType}: ${error.message}${correlationId ? ` (correlationId: ${correlationId})` : ''}`,
     };
   }
 }

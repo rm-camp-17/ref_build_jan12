@@ -29,9 +29,9 @@ export const config = {
       // Display name
       name: process.env.HS_REFERRAL_NAME_PROP || 'referral_name',
       // Status dropdown (enum) - property name: referral_status, label: referral_outreach_status
-      outreach: process.env.HS_REFERRAL_OUTREACH_PROP || 'referral_status',
+      outreach: process.env.HS_REFERRAL_OUTREACH_PROP || 'referral_outreach_status',
       // Interest dropdown (enum) - property name: client_interest, label: referral_client_interest
-      interest: process.env.HS_REFERRAL_INTEREST_PROP || 'client_interest',
+      interest: process.env.HS_REFERRAL_INTEREST_PROP || 'referral_client_interest',
       // Note to company
       note: process.env.HS_REFERRAL_NOTE_PROP || 'referral_note_to_company',
       // Previously sent checkbox
@@ -40,6 +40,19 @@ export const config = {
       copiedDealKey: process.env.HS_REFERRAL_COPIED_DEAL_KEY_PROP || 'copied_from_deal_key',
       // Copied from year
       copiedYear: process.env.HS_REFERRAL_COPIED_YEAR_PROP || 'copied_from_year',
+      // Company name (denormalized from Company)
+      companyName: process.env.HS_REFERRAL_COMPANY_NAME_PROP || 'company_name',
+      // Owner ID (from associated Deal)
+      ownerId: process.env.HS_REFERRAL_OWNER_PROP || 'hubspot_owner_id',
+      // Resend requested checkbox (computed from outreach status)
+      resendRequested: process.env.HS_REFERRAL_RESEND_REQUESTED_PROP || 'resend_requested',
+      // Selected session fields (only set when client_interest == "Selected")
+      selectedSessionStartDate: process.env.HS_REFERRAL_SELECTED_START_PROP || 'selected_session_start_date',
+      selectedSessionEndDate: process.env.HS_REFERRAL_SELECTED_END_PROP || 'selected_session_end_date',
+      selectedSessionPrice: process.env.HS_REFERRAL_SELECTED_PRICE_PROP || 'selected_session_price',
+      // Email tracking fields
+      emailLastSentDatetime: process.env.HS_REFERRAL_EMAIL_LAST_SENT_PROP || 'email_last_sent_datetime',
+      emailSendCount: process.env.HS_REFERRAL_EMAIL_SEND_COUNT_PROP || 'email_send_count',
     },
     deal: {
       key: process.env.HS_DEAL_KEY_PROP || 'deal_key',
