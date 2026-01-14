@@ -52,6 +52,54 @@ interface CreateOrUpdateResult {
 // ============================================================================
 
 /**
+ * Fetch company name by ID
+ */
+async function fetchCompanyName(companyId: string): Promise<string | null> {
+  try {
+    const result = await hubspotClient.crm.companies.basicApi.getById(companyId, ['name']);
+    return result.properties?.name || null;
+  } catch (error: any) {
+    console.warn(`[workflow] Failed to fetch company name for ${companyId}:`, error.message);
+    return null;
+  }
+}
+
+/**
+ * Fetch session details by ID
+ */
+async function fetchSessionDetails(sessionId: string): Promise<{
+  startDate?: string;
+  endDate?: string;
+  price?: string;
+  weeks?: string;
+} | null> {
+  try {
+    const sessionProps = [
+      config.properties.session.startDate,
+      config.properties.session.endDate,
+      config.properties.session.price,
+      config.properties.session.weeks,
+    ];
+
+    const result = await hubspotClient.crm.objects.basicApi.getById(
+      config.objectTypes.session,
+      sessionId,
+      sessionProps
+    );
+
+    return {
+      startDate: result.properties?.[config.properties.session.startDate] || undefined,
+      endDate: result.properties?.[config.properties.session.endDate] || undefined,
+      price: result.properties?.[config.properties.session.price] || undefined,
+      weeks: result.properties?.[config.properties.session.weeks] || undefined,
+    };
+  } catch (error: any) {
+    console.warn(`[workflow] Failed to fetch session details for ${sessionId}:`, error.message);
+    return null;
+  }
+}
+
+/**
  * Search for existing referral by key
  */
 async function findExistingReferral(referralKey: string): Promise<string | null> {
@@ -207,10 +255,32 @@ export async function createReferralWorkflow(
   const input = validation.data;
   console.log(`[workflow] Starting referral creation for deal ${input.dealId} → company ${input.companyId}`);
 
-  // Step 2: Build canonical payload
+  // Step 2: Fetch company and session details to enrich the referral
+  console.log(`[workflow] Fetching company name and session details...`);
+
+  // Fetch company name
+  const companyName = await fetchCompanyName(input.companyId);
+  if (companyName) {
+    input.companyName = companyName;
+    console.log(`[workflow] Company name: ${companyName}`);
+  }
+
+  // Fetch session details if sessionId is provided
+  if (input.sessionId) {
+    const sessionDetails = await fetchSessionDetails(input.sessionId);
+    if (sessionDetails) {
+      input.sessionStartDate = sessionDetails.startDate;
+      input.sessionEndDate = sessionDetails.endDate;
+      input.sessionPrice = sessionDetails.price;
+      input.sessionWeeks = sessionDetails.weeks;
+      console.log(`[workflow] Session details:`, sessionDetails);
+    }
+  }
+
+  // Step 3: Build canonical payload
   const payload = buildReferralPayload(input);
 
-  // Step 3: Create or update referral
+  // Step 4: Create or update referral
   let referralId: string;
   let created: boolean;
 
@@ -226,7 +296,7 @@ export async function createReferralWorkflow(
     };
   }
 
-  // Step 4: Create associations (idempotent)
+  // Step 5: Create associations (idempotent)
   const associationSpecs = buildAssociationSpecs(referralId, input);
   const associationResult = await createAssociationsBatch(associationSpecs);
 
@@ -238,7 +308,7 @@ export async function createReferralWorkflow(
     console.warn('[workflow] Some associations failed:', associationResult.failed);
   }
 
-  // Step 5: Optionally associate Deal ↔ Company
+  // Step 6: Optionally associate Deal ↔ Company
   let dealCompanyAssociated = false;
 
   if (input.associateDealToCompany) {
@@ -266,7 +336,7 @@ export async function createReferralWorkflow(
     }
   }
 
-  // Step 6: Return structured result
+  // Step 7: Return structured result
   return {
     success: true,
     referralId,

@@ -40,6 +40,13 @@ export const config = {
       copiedDealKey: process.env.HS_REFERRAL_COPIED_DEAL_KEY_PROP || 'copied_from_deal_key',
       // Copied from year
       copiedYear: process.env.HS_REFERRAL_COPIED_YEAR_PROP || 'copied_from_year',
+      // Company name (denormalized from associated company)
+      companyName: process.env.HS_REFERRAL_COMPANY_NAME_PROP || 'company_name',
+      // Selected session fields (denormalized from associated session)
+      selectedSessionStartDate: process.env.HS_REFERRAL_SESSION_START_PROP || 'selected_session_start_date',
+      selectedSessionEndDate: process.env.HS_REFERRAL_SESSION_END_PROP || 'selected_session_end_date',
+      selectedSessionPrice: process.env.HS_REFERRAL_SESSION_PRICE_PROP || 'selected_session_price',
+      sessionWeeks: process.env.HS_REFERRAL_SESSION_WEEKS_PROP || 'session_weeks',
     },
     deal: {
       key: process.env.HS_DEAL_KEY_PROP || 'deal_key',

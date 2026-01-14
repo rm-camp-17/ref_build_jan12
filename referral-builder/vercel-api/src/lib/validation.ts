@@ -18,6 +18,12 @@ export interface CreateReferralInput {
   outreachStatus?: string;
   clientInterest?: string;
   associateDealToCompany?: boolean;
+  // Denormalized fields (populated by workflow from fetched data)
+  companyName?: string;
+  sessionStartDate?: string;
+  sessionEndDate?: string;
+  sessionPrice?: string;
+  sessionWeeks?: string;
 }
 
 export interface ValidationResult<T> {
@@ -147,6 +153,25 @@ export function buildReferralPayload(input: CreateReferralInput): ReferralPayloa
     // Note (empty string if not provided)
     [config.properties.referral.note]: input.note || '',
   };
+
+  // Add company name if provided
+  if (input.companyName) {
+    properties[config.properties.referral.companyName] = input.companyName;
+  }
+
+  // Add session fields if provided
+  if (input.sessionStartDate) {
+    properties[config.properties.referral.selectedSessionStartDate] = input.sessionStartDate;
+  }
+  if (input.sessionEndDate) {
+    properties[config.properties.referral.selectedSessionEndDate] = input.sessionEndDate;
+  }
+  if (input.sessionPrice) {
+    properties[config.properties.referral.selectedSessionPrice] = input.sessionPrice;
+  }
+  if (input.sessionWeeks) {
+    properties[config.properties.referral.sessionWeeks] = input.sessionWeeks;
+  }
 
   return {
     properties,
