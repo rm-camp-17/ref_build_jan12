@@ -3,9 +3,10 @@
  *
  * This endpoint uses the CreateReferralWorkflow for:
  * - Input validation
- * - Canonical payload building with defaults
+ * - Fetching Deal (for owner) and Company (for name)
+ * - Canonical payload building with defaults + computed fields
  * - Upsert logic (create or update based on referral_key)
- * - Idempotent association creation
+ * - Idempotent association creation (including labeled associations for Selected session)
  * - Structured error handling
  *
  * Request body:
@@ -13,12 +14,23 @@
  *   dealId: string (required)
  *   companyId: string (required)
  *   programId?: string
- *   sessionId?: string
- *   note?: string
- *   outreachStatus?: string (internal value, e.g., "ready_to_send")
- *   clientInterest?: string (internal value, e.g., "active_considering")
+ *   sessionId?: string                // Single session (backwards compatible)
+ *   sessionIds?: string[]             // Multiple sessions support
+ *   selectedBillingSessionId?: string // Billing session when clientInterest == "Selected"
+ *   note?: string                     // referral_note_to_company
+ *   outreachStatus?: string           // e.g., "Ready to Send", "Sent", "Resend"
+ *   clientInterest?: string           // e.g., "Active / considering", "Selected"
+ *   copiedFromDealKey?: string        // Set only if copied from prior-year deal
+ *   copiedFromYear?: number           // Set only if copiedFromDealKey is set
  *   associateDealToCompany?: boolean
  * }
+ *
+ * Computed fields set on referral:
+ * - company_name: from Company.name
+ * - hubspot_owner_id: from Deal.hubspot_owner_id
+ * - resend_requested: true if outreachStatus == "Resend"
+ * - selected_session_start_date, selected_session_end_date, selected_session_price:
+ *   Only set when clientInterest == "Selected" AND selectedBillingSessionId provided
  *
  * Response:
  * {

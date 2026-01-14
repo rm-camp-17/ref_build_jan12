@@ -3,12 +3,26 @@
  *
  * This module orchestrates the complete referral creation flow:
  * 1. Validate inputs
- * 2. Build canonical payload with defaults
- * 3. Search for existing referral (upsert logic)
- * 4. Create or update referral
- * 5. Create all associations (idempotent)
- * 6. Optionally associate Deal ↔ Company
- * 7. Return structured result
+ * 2. Fetch Deal (to get hubspot_owner_id)
+ * 3. Fetch Company (to get name for company_name)
+ * 4. Build canonical payload with defaults + computed fields
+ * 5. Search for existing referral (upsert logic)
+ * 6. Create or update referral
+ * 7. Create all associations (idempotent)
+ *    - Referral ↔ Deal
+ *    - Referral ↔ Company
+ *    - Referral ↔ Program (optional)
+ *    - Referral ↔ Sessions (optional, supports multiple)
+ *    - Selected session with label (when client_interest == "Selected")
+ * 8. Optionally associate Deal ↔ Company
+ * 9. Return structured result
+ *
+ * Computed fields:
+ * - company_name: from Company.name
+ * - hubspot_owner_id: from Deal.hubspot_owner_id
+ * - resend_requested: true if referral_outreach_status == "Resend"
+ * - selected_session_start_date, selected_session_end_date, selected_session_price:
+ *   Only set when client_interest == "Selected" AND selectedBillingSessionId is provided
  *
  * HubSpot Platform Version 2025.02 compatible
  */
@@ -50,6 +64,91 @@ interface CreateOrUpdateResult {
 // ============================================================================
 // Internal Helper Functions
 // ============================================================================
+
+/**
+ * Fetch Deal to get owner ID and other properties
+ */
+async function fetchDealData(dealId: string): Promise<{
+  ownerId?: string;
+  dealKey?: string;
+  year?: string;
+}> {
+  try {
+    const deal = await hubspotClient.crm.deals.basicApi.getById(dealId, [
+      'hubspot_owner_id',
+      config.properties.deal.key,
+      config.properties.deal.year,
+    ]);
+    return {
+      ownerId: deal.properties.hubspot_owner_id || undefined,
+      dealKey: deal.properties[config.properties.deal.key] || undefined,
+      year: deal.properties[config.properties.deal.year] || undefined,
+    };
+  } catch (error: any) {
+    console.error(`[workflow] Failed to fetch deal ${dealId}:`, error.message);
+    // Return empty - don't fail the workflow for this
+    return {};
+  }
+}
+
+/**
+ * Fetch Company to get name
+ */
+async function fetchCompanyName(companyId: string): Promise<string | undefined> {
+  try {
+    const company = await hubspotClient.crm.companies.basicApi.getById(companyId, ['name']);
+    return company.properties.name || undefined;
+  } catch (error: any) {
+    console.error(`[workflow] Failed to fetch company ${companyId}:`, error.message);
+    return undefined;
+  }
+}
+
+/**
+ * Fetch Session data for billing session fields
+ */
+async function fetchSessionData(sessionId: string): Promise<{
+  startDate?: string;
+  endDate?: string;
+  price?: string;
+} | null> {
+  try {
+    const session = await hubspotClient.crm.objects.basicApi.getById(
+      config.objectTypes.session,
+      sessionId,
+      [
+        config.properties.session.startDate,
+        config.properties.session.endDate,
+        config.properties.session.price,
+      ]
+    );
+    return {
+      startDate: session.properties[config.properties.session.startDate] || undefined,
+      endDate: session.properties[config.properties.session.endDate] || undefined,
+      price: session.properties[config.properties.session.price] || undefined,
+    };
+  } catch (error: any) {
+    console.error(`[workflow] Failed to fetch session ${sessionId}:`, error.message);
+    return null;
+  }
+}
+
+/**
+ * Check if outreach status indicates resend is requested
+ */
+function isResendRequested(outreachStatus: string | undefined): boolean {
+  if (!outreachStatus) return false;
+  // Match "Resend" case-insensitively
+  return outreachStatus.toLowerCase() === 'resend';
+}
+
+/**
+ * Check if client interest is "Selected"
+ */
+function isClientInterestSelected(clientInterest: string | undefined): boolean {
+  if (!clientInterest) return false;
+  return clientInterest.toLowerCase() === 'selected';
+}
 
 /**
  * Search for existing referral by key
@@ -118,6 +217,10 @@ async function createOrUpdateReferral(
 
 /**
  * Build list of associations to create
+ *
+ * Supports:
+ * - Multiple sessions (sessionIds array)
+ * - Selected billing session with "Selected_Referral" label when client_interest == "Selected"
  */
 function buildAssociationSpecs(
   referralId: string,
@@ -151,13 +254,35 @@ function buildAssociationSpecs(
     });
   }
 
-  // Optional: Referral ↔ Session
+  // Collect all session IDs to associate
+  const allSessionIds = new Set<string>();
+
+  // Add sessions from sessionIds array
+  if (input.sessionIds && input.sessionIds.length > 0) {
+    for (const sid of input.sessionIds) {
+      allSessionIds.add(sid);
+    }
+  }
+
+  // Add single sessionId for backwards compatibility
   if (input.sessionId) {
+    allSessionIds.add(input.sessionId);
+  }
+
+  // Create associations for all sessions
+  for (const sessionId of allSessionIds) {
+    // Check if this is the selected billing session AND client interest is "Selected"
+    const isSelectedBillingSession =
+      isClientInterestSelected(input.clientInterest) &&
+      input.selectedBillingSessionId === sessionId;
+
     specs.push({
       fromId: referralId,
       fromType: config.objectTypes.referral,
-      toId: input.sessionId,
+      toId: sessionId,
       toType: config.objectTypes.session,
+      // Use "Selected_Referral" label for the billing session when client interest is Selected
+      label: isSelectedBillingSession ? 'Selected_Referral' : undefined,
     });
   }
 
@@ -181,11 +306,18 @@ async function dealHasCompany(dealId: string): Promise<boolean> {
  *
  * Single entry point that:
  * 1. Validates input
- * 2. Builds canonical payload with defaults
- * 3. Creates or updates referral (upsert)
- * 4. Creates all associations (idempotent)
- * 5. Optionally associates Deal ↔ Company
- * 6. Returns structured result
+ * 2. Fetches Deal (for hubspot_owner_id) and Company (for name) in parallel
+ * 3. Builds canonical payload with defaults + computed fields
+ * 4. Creates or updates referral (upsert)
+ * 5. Creates all associations (idempotent)
+ * 6. Optionally associates Deal ↔ Company
+ * 7. Returns structured result
+ *
+ * Computed fields set:
+ * - company_name: from Company.name
+ * - hubspot_owner_id: from Deal.hubspot_owner_id
+ * - resend_requested: true if referral_outreach_status == "Resend"
+ * - selected_session_*: only when client_interest == "Selected" AND billing session set
  *
  * @param rawInput - Raw input from API request
  * @returns WorkflowResult with success status and details
@@ -207,10 +339,56 @@ export async function createReferralWorkflow(
   const input = validation.data;
   console.log(`[workflow] Starting referral creation for deal ${input.dealId} → company ${input.companyId}`);
 
-  // Step 2: Build canonical payload
+  // Step 2: Fetch Deal and Company data in parallel
+  // Also fetch billing session data if needed
+  const shouldFetchBillingSession =
+    isClientInterestSelected(input.clientInterest) && input.selectedBillingSessionId;
+
+  const [dealData, companyName, billingSessionData] = await Promise.all([
+    fetchDealData(input.dealId),
+    fetchCompanyName(input.companyId),
+    shouldFetchBillingSession
+      ? fetchSessionData(input.selectedBillingSessionId!)
+      : Promise.resolve(null),
+  ]);
+
+  console.log(`[workflow] Fetched data - Deal owner: ${dealData.ownerId}, Company: ${companyName}, Session: ${billingSessionData ? 'yes' : 'no'}`);
+
+  // Step 3: Build canonical payload with computed fields
   const payload = buildReferralPayload(input);
 
-  // Step 3: Create or update referral
+  // Add computed properties
+  // company_name - from Company
+  if (companyName) {
+    payload.properties[config.properties.referral.companyName] = companyName;
+  }
+
+  // hubspot_owner_id - from Deal
+  if (dealData.ownerId) {
+    payload.properties[config.properties.referral.ownerId] = dealData.ownerId;
+  }
+
+  // resend_requested - computed from outreach status
+  const outreachStatus = input.outreachStatus || payload.properties[config.properties.referral.outreach];
+  payload.properties[config.properties.referral.resendRequested] = isResendRequested(outreachStatus)
+    ? 'true'
+    : 'false';
+
+  // selected_session_* fields - only if client_interest == "Selected" AND billing session provided
+  if (isClientInterestSelected(input.clientInterest) && billingSessionData) {
+    if (billingSessionData.startDate) {
+      payload.properties[config.properties.referral.selectedSessionStartDate] = billingSessionData.startDate;
+    }
+    if (billingSessionData.endDate) {
+      payload.properties[config.properties.referral.selectedSessionEndDate] = billingSessionData.endDate;
+    }
+    if (billingSessionData.price) {
+      payload.properties[config.properties.referral.selectedSessionPrice] = billingSessionData.price;
+    }
+    console.log(`[workflow] Set selected session fields from billing session ${input.selectedBillingSessionId}`);
+  }
+
+  // Step 4: Create or update referral
   let referralId: string;
   let created: boolean;
 
@@ -226,7 +404,7 @@ export async function createReferralWorkflow(
     };
   }
 
-  // Step 4: Create associations (idempotent)
+  // Step 5: Create associations (idempotent)
   const associationSpecs = buildAssociationSpecs(referralId, input);
   const associationResult = await createAssociationsBatch(associationSpecs);
 
@@ -238,7 +416,7 @@ export async function createReferralWorkflow(
     console.warn('[workflow] Some associations failed:', associationResult.failed);
   }
 
-  // Step 5: Optionally associate Deal ↔ Company
+  // Step 6: Optionally associate Deal ↔ Company
   let dealCompanyAssociated = false;
 
   if (input.associateDealToCompany) {
@@ -266,7 +444,7 @@ export async function createReferralWorkflow(
     }
   }
 
-  // Step 6: Return structured result
+  // Step 7: Return structured result
   return {
     success: true,
     referralId,
