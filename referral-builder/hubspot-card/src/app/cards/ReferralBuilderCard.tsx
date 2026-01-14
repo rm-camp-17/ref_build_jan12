@@ -161,11 +161,11 @@ function ReferralBuilderCard({ context, actions }: any) {
   ): Promise<any> => {
     const url = `${API_BASE}${path}`;
 
-    // Note: HubSpot's fetch() only allows Authorization header
-    // Content-Type is automatically inferred from the body
+    // Note: HubSpot's fetch() handles JSON serialization internally
+    // Pass the body as an object, not a JSON string
     const res = await hubspot.fetch(url, {
       method: init?.method || "GET",
-      body: init?.body ? JSON.stringify(init.body) : undefined,
+      body: init?.body || undefined,
     });
 
     let data: any = null;
