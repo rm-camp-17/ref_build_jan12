@@ -277,9 +277,11 @@ function ReferralBuilderCard({ context, actions }: any) {
       const props = data?.properties || {};
 
       if (props.referral_status?.options?.length) {
+        console.log("[Frontend] Received status options:", props.referral_status.options.slice(0, 2));
         setStatusOptions(props.referral_status.options);
       }
       if (props.client_interest?.options?.length) {
+        console.log("[Frontend] Received interest options:", props.client_interest.options.slice(0, 2));
         setInterestOptions(props.client_interest.options);
       }
     } catch (e) {
@@ -391,6 +393,8 @@ function ReferralBuilderCard({ context, actions }: any) {
         clientInterest: selectedInterest,
         associateDealToCompany: showAssociateCheckbox && associateToDeal,
       };
+
+      console.log("[Frontend] Creating referral with payload:", payload);
 
       const data = await apiRequest("/api/referrals", {
         method: "POST",
@@ -657,7 +661,10 @@ function ReferralBuilderCard({ context, actions }: any) {
               label="Referral Status"
               options={statusOptions}
               value={selectedStatus}
-              onChange={(val: string) => setSelectedStatus(val)}
+              onChange={(val: string) => {
+                console.log("[Frontend] Status onChange received:", val);
+                setSelectedStatus(val);
+              }}
               description={`Default: ${
                 statusOptions.find((o) => o.value === DEFAULTS.REFERRAL_STATUS)?.label ||
                 "Ready to Send"
@@ -669,7 +676,10 @@ function ReferralBuilderCard({ context, actions }: any) {
               label="Client Interest"
               options={interestOptions}
               value={selectedInterest}
-              onChange={(val: string) => setSelectedInterest(val)}
+              onChange={(val: string) => {
+                console.log("[Frontend] Interest onChange received:", val);
+                setSelectedInterest(val);
+              }}
               description={`Default: ${
                 interestOptions.find((o) => o.value === DEFAULTS.CLIENT_INTEREST)?.label ||
                 "Active / considering"
