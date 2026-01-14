@@ -4,25 +4,32 @@
  * This module orchestrates the complete referral creation flow:
  * 1. Validate inputs
  * 2. Fetch Deal (to get hubspot_owner_id)
- * 3. Fetch Company (to get name for company_name)
- * 4. Build canonical payload with defaults + computed fields
- * 5. Search for existing referral (upsert logic)
- * 6. Create or update referral
- * 7. Create all associations (idempotent)
+ * 3. Build canonical payload with defaults + computed fields
+ * 4. Search for existing referral (upsert logic)
+ * 5. Create or update referral (with retry for read-only properties)
+ * 6. Create all associations (idempotent)
  *    - Referral ↔ Deal
- *    - Referral ↔ Company
+ *    - Referral ↔ Company (with "Recommendation" or "Selected_Referral" label)
+ *    - Deal ↔ Company (always created when referral is created)
  *    - Referral ↔ Program (optional)
  *    - Referral ↔ Sessions (optional, supports multiple)
- *    - Selected session with label (when client_interest == "Selected")
- * 8. Optionally associate Deal ↔ Company
- * 9. Return structured result
+ * 7. Return structured result
  *
- * Computed fields:
- * - company_name: from Company.name
+ * Association Labels:
+ * - "Recommendation": Default label for Referral ↔ Company associations
+ * - "Selected_Referral": Label for Referral ↔ Company when client_interest == "Selected"
+ *
+ * Computed fields set by this workflow:
  * - hubspot_owner_id: from Deal.hubspot_owner_id
  * - resend_requested: true if referral_outreach_status == "Resend"
  * - selected_session_start_date, selected_session_end_date, selected_session_price:
  *   Only set when client_interest == "Selected" AND selectedBillingSessionId is provided
+ *
+ * Note: company_name is a calculated property in HubSpot (auto-populated from
+ * the associated Company), so we don't set it here.
+ *
+ * Note: If HubSpot returns READ_ONLY_VALUE errors for any properties, we
+ * automatically remove them and retry.
  *
  * HubSpot Platform Version 2025.02 compatible
  */
@@ -188,39 +195,100 @@ async function findExistingReferral(referralKey: string): Promise<string | null>
 }
 
 /**
- * Create or update referral
+ * Extract read-only property names from HubSpot error response
+ */
+function extractReadOnlyProperties(error: any): string[] {
+  const readOnlyProps: string[] = [];
+
+  // Try to parse the error body
+  const body = error?.body || error?.response?.body;
+  if (!body) return readOnlyProps;
+
+  // Check for errors array
+  const errors = body.errors || [];
+  for (const err of errors) {
+    if (err.code === 'READ_ONLY_VALUE' && err.context?.propertyName) {
+      const propNames = err.context.propertyName;
+      if (Array.isArray(propNames)) {
+        readOnlyProps.push(...propNames);
+      } else if (typeof propNames === 'string') {
+        readOnlyProps.push(propNames);
+      }
+    }
+  }
+
+  return readOnlyProps;
+}
+
+/**
+ * Create or update referral with retry for read-only properties
+ *
+ * If HubSpot returns READ_ONLY_VALUE errors, we remove those properties
+ * and retry (they're likely calculated properties in HubSpot).
  */
 async function createOrUpdateReferral(
   payload: ReturnType<typeof buildReferralPayload>
 ): Promise<CreateOrUpdateResult> {
   const existingId = await findExistingReferral(payload.referralKey);
 
-  if (existingId) {
-    // Update existing
-    await hubspotClient.crm.objects.basicApi.update(
-      config.objectTypes.referral,
-      existingId,
-      { properties: payload.properties }
-    );
-    console.log(`[workflow] Updated referral: ${existingId}`);
-    return { referralId: existingId, created: false };
+  // Properties to use (may be filtered on retry)
+  let properties = { ...payload.properties };
+
+  // Allow up to 2 retries for read-only property errors
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      if (existingId) {
+        // Update existing
+        await hubspotClient.crm.objects.basicApi.update(
+          config.objectTypes.referral,
+          existingId,
+          { properties }
+        );
+        console.log(`[workflow] Updated referral: ${existingId}`);
+        return { referralId: existingId, created: false };
+      }
+
+      // Create new
+      const createResult = await hubspotClient.crm.objects.basicApi.create(
+        config.objectTypes.referral,
+        { properties, associations: [] }
+      );
+      console.log(`[workflow] Created referral: ${createResult.id}`);
+      return { referralId: createResult.id, created: true };
+    } catch (error: any) {
+      // Check if this is a read-only property error
+      const readOnlyProps = extractReadOnlyProperties(error);
+
+      if (readOnlyProps.length > 0 && attempt < 2) {
+        // Remove read-only properties and retry
+        console.warn(
+          `[workflow] Removing read-only properties and retrying:`,
+          readOnlyProps
+        );
+        for (const prop of readOnlyProps) {
+          delete properties[prop];
+        }
+        continue; // Retry with filtered properties
+      }
+
+      // Re-throw if not a read-only error or out of retries
+      throw error;
+    }
   }
 
-  // Create new
-  const createResult = await hubspotClient.crm.objects.basicApi.create(
-    config.objectTypes.referral,
-    { properties: payload.properties, associations: [] }
-  );
-  console.log(`[workflow] Created referral: ${createResult.id}`);
-  return { referralId: createResult.id, created: true };
+  // Should not reach here, but TypeScript needs this
+  throw new Error('Unexpected: exhausted retries without success or error');
 }
 
 /**
  * Build list of associations to create
  *
  * Supports:
+ * - Deal ↔ Company (always created when referral is created)
  * - Multiple sessions (sessionIds array)
- * - Selected billing session with "Selected_Referral" label when client_interest == "Selected"
+ * - Association labels:
+ *   - "Recommendation" for Referral ↔ Company (default)
+ *   - "Selected_Referral" for Referral ↔ Company when client_interest == "Selected"
  */
 function buildAssociationSpecs(
   referralId: string,
@@ -236,10 +304,25 @@ function buildAssociationSpecs(
     toType: 'deals',
   });
 
-  // Always: Referral ↔ Company
+  // Always: Referral ↔ Company with appropriate label
+  // Use "Selected_Referral" label when client_interest is "Selected", otherwise "Recommendation"
+  const companyLabel = isClientInterestSelected(input.clientInterest)
+    ? 'Selected_Referral'
+    : 'Recommendation';
+
   specs.push({
     fromId: referralId,
     fromType: config.objectTypes.referral,
+    toId: input.companyId,
+    toType: 'companies',
+    label: companyLabel,
+  });
+
+  // Always: Deal ↔ Company (idempotent - won't create duplicates)
+  // Every referral should link its deal to its company
+  specs.push({
+    fromId: input.dealId,
+    fromType: 'deals',
     toId: input.companyId,
     toType: 'companies',
   });
@@ -269,32 +352,17 @@ function buildAssociationSpecs(
     allSessionIds.add(input.sessionId);
   }
 
-  // Create associations for all sessions
+  // Create associations for all sessions (no special labels for sessions)
   for (const sessionId of allSessionIds) {
-    // Check if this is the selected billing session AND client interest is "Selected"
-    const isSelectedBillingSession =
-      isClientInterestSelected(input.clientInterest) &&
-      input.selectedBillingSessionId === sessionId;
-
     specs.push({
       fromId: referralId,
       fromType: config.objectTypes.referral,
       toId: sessionId,
       toType: config.objectTypes.session,
-      // Use "Selected_Referral" label for the billing session when client interest is Selected
-      label: isSelectedBillingSession ? 'Selected_Referral' : undefined,
     });
   }
 
   return specs;
-}
-
-/**
- * Check if deal already has an associated company
- */
-async function dealHasCompany(dealId: string): Promise<boolean> {
-  const companyIds = await getAssociatedIds('deals', dealId, 'companies');
-  return companyIds.length > 0;
 }
 
 // ============================================================================
@@ -306,18 +374,19 @@ async function dealHasCompany(dealId: string): Promise<boolean> {
  *
  * Single entry point that:
  * 1. Validates input
- * 2. Fetches Deal (for hubspot_owner_id) and Company (for name) in parallel
+ * 2. Fetches Deal (for hubspot_owner_id)
  * 3. Builds canonical payload with defaults + computed fields
- * 4. Creates or updates referral (upsert)
+ * 4. Creates or updates referral (upsert) with retry for read-only properties
  * 5. Creates all associations (idempotent)
  * 6. Optionally associates Deal ↔ Company
  * 7. Returns structured result
  *
  * Computed fields set:
- * - company_name: from Company.name
  * - hubspot_owner_id: from Deal.hubspot_owner_id
  * - resend_requested: true if referral_outreach_status == "Resend"
  * - selected_session_*: only when client_interest == "Selected" AND billing session set
+ *
+ * Note: company_name is calculated by HubSpot from the associated Company.
  *
  * @param rawInput - Raw input from API request
  * @returns WorkflowResult with success status and details
@@ -403,6 +472,7 @@ export async function createReferralWorkflow(
   }
 
   // Step 5: Create associations (idempotent)
+  // This includes: Referral↔Deal, Referral↔Company (with label), Deal↔Company, Program, Sessions
   const associationSpecs = buildAssociationSpecs(referralId, input);
   const associationResult = await createAssociationsBatch(associationSpecs);
 
@@ -414,35 +484,12 @@ export async function createReferralWorkflow(
     console.warn('[workflow] Some associations failed:', associationResult.failed);
   }
 
-  // Step 6: Optionally associate Deal ↔ Company
-  let dealCompanyAssociated = false;
+  // Check if Deal↔Company was created (it's in the association specs)
+  const dealCompanyAssociated = associationResult.successful.some(
+    (spec) => spec.fromType === 'deals' && spec.toType === 'companies'
+  );
 
-  if (input.associateDealToCompany) {
-    // Check if deal already has a company
-    const hasCompany = await dealHasCompany(input.dealId);
-
-    if (!hasCompany) {
-      const dealCompanyResult = await createAssociationsBatch([
-        {
-          fromId: input.dealId,
-          fromType: 'deals',
-          toId: input.companyId,
-          toType: 'companies',
-        },
-      ]);
-
-      if (dealCompanyResult.allSucceeded) {
-        dealCompanyAssociated = true;
-        console.log(`[workflow] Created Deal ↔ Company association: ${input.dealId} ↔ ${input.companyId}`);
-      } else {
-        errors.push('Failed to associate deal with company');
-      }
-    } else {
-      console.log(`[workflow] Deal ${input.dealId} already has associated company, skipping`);
-    }
-  }
-
-  // Step 7: Return structured result
+  // Step 6: Return structured result
   return {
     success: true,
     referralId,
