@@ -57,6 +57,7 @@ export const config = {
     deal: {
       key: process.env.HS_DEAL_KEY_PROP || 'deal_key',
       year: process.env.HS_DEAL_YEAR_PROP || 'deal_year',
+      name: process.env.HS_DEAL_NAME_PROP || 'dealname', // Usually contains child's name
     },
     program: {
       name: process.env.HS_PROGRAM_NAME_PROP || 'name',

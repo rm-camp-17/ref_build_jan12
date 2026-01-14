@@ -351,12 +351,11 @@ function ReferralBuilderCard({ context, actions }: any) {
     if (!programId) return;
 
     const data = await apiRequest(`/api/programs/${programId}/sessions`);
-    const opts: Option[] = (data?.results || []).map((s: any) => {
-      const parts = [s.name || `Session ${s.id}`];
-      if (s.startDate) parts.push(`(${s.startDate})`);
-      if (s.price) parts.push(`$${s.price}`);
-      return { label: parts.join(" "), value: String(s.id) };
-    });
+    const opts: Option[] = (data?.results || []).map((s: any) => ({
+      // Use displayName from API (includes name + dates), fallback to name
+      label: s.displayName || s.name || `Session ${s.id}`,
+      value: String(s.id),
+    }));
 
     setSessionOptions(opts);
   }, [apiRequest]);
