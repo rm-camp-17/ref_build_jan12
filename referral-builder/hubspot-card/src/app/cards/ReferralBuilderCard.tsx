@@ -160,15 +160,11 @@ function ReferralBuilderCard({ context, actions }: any) {
     init?: { method?: string; body?: any }
   ): Promise<any> => {
     const url = `${API_BASE}${path}`;
-    const headers: Record<string, string> = {};
 
-    if (init?.body) {
-      headers["Content-Type"] = "application/json";
-    }
-
+    // Note: HubSpot's fetch() only allows Authorization header
+    // Content-Type is automatically inferred from the body
     const res = await hubspot.fetch(url, {
       method: init?.method || "GET",
-      headers,
       body: init?.body ? JSON.stringify(init.body) : undefined,
     });
 
