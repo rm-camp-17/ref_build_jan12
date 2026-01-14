@@ -39,18 +39,43 @@ export async function GET(
       return NextResponse.json({ results: [] });
     }
 
-    // Fetch program details
+    // Fetch program details - try multiple common property names for the display name
+    const nameProperties = [
+      config.properties.program.name,
+      'program_name',
+      'hs_object_name',
+      'hs_name',
+    ];
+
     const programs: ProgramData[] = await Promise.all(
       programIds.map(async (programId: string) => {
         try {
           const program = await hubspotClient.crm.objects.basicApi.getById(
             config.objectTypes.program,
             programId,
-            [config.properties.program.name]
+            nameProperties
           );
+
+          // Try each property name to find the display name
+          let displayName = 'Unnamed Program';
+          for (const prop of nameProperties) {
+            if (program.properties[prop]) {
+              displayName = program.properties[prop];
+              break;
+            }
+          }
+
+          // Log available properties for debugging if name not found
+          if (displayName === 'Unnamed Program') {
+            console.warn(
+              `[programs] Program ${programId} has no name in properties:`,
+              Object.keys(program.properties).filter(k => !k.startsWith('hs_'))
+            );
+          }
+
           return {
             id: program.id,
-            name: program.properties[config.properties.program.name] || 'Unnamed Program',
+            name: displayName,
           };
         } catch (e: any) {
           console.warn(`[programs] Failed to fetch program ${programId}:`, e.message);

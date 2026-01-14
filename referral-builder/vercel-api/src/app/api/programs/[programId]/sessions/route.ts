@@ -47,24 +47,51 @@ export async function GET(
       return NextResponse.json({ results: [] });
     }
 
-    // Fetch session details
+    // Fetch session details - try multiple common property names for the display name
+    const nameProperties = [
+      config.properties.session.name,
+      'session_name',
+      'hs_object_name',
+      'hs_name',
+    ];
+
+    const allProperties = [
+      ...nameProperties,
+      config.properties.session.startDate,
+      config.properties.session.endDate,
+      config.properties.session.price,
+      config.properties.session.weeks,
+    ];
+
     const sessions: SessionData[] = await Promise.all(
       sessionIds.map(async (sessionId: string) => {
         try {
           const session = await hubspotClient.crm.objects.basicApi.getById(
             config.objectTypes.session,
             sessionId,
-            [
-              config.properties.session.name,
-              config.properties.session.startDate,
-              config.properties.session.endDate,
-              config.properties.session.price,
-              config.properties.session.weeks,
-            ]
+            allProperties
           );
+
+          // Try each property name to find the display name
+          let displayName = 'Unnamed Session';
+          for (const prop of nameProperties) {
+            if (session.properties[prop]) {
+              displayName = session.properties[prop];
+              break;
+            }
+          }
+
+          // Log available properties for debugging if name not found
+          if (displayName === 'Unnamed Session') {
+            console.warn(
+              `[sessions] Session ${sessionId} has no name in properties:`,
+              Object.keys(session.properties).filter(k => !k.startsWith('hs_'))
+            );
+          }
+
           return {
             id: session.id,
-            name: session.properties[config.properties.session.name] || 'Unnamed Session',
+            name: displayName,
             startDate: session.properties[config.properties.session.startDate] || undefined,
             endDate: session.properties[config.properties.session.endDate] || undefined,
             price: session.properties[config.properties.session.price] || undefined,

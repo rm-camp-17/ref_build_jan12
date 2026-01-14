@@ -9,12 +9,15 @@
  * 5. Create or update referral (with retry for read-only properties)
  * 6. Create all associations (idempotent)
  *    - Referral ↔ Deal
- *    - Referral ↔ Company
+ *    - Referral ↔ Company (with "Recommendation" or "Selected_Referral" label)
+ *    - Deal ↔ Company (always created when referral is created)
  *    - Referral ↔ Program (optional)
  *    - Referral ↔ Sessions (optional, supports multiple)
- *    - Selected session with label (when client_interest == "Selected")
- * 7. Optionally associate Deal ↔ Company
- * 8. Return structured result
+ * 7. Return structured result
+ *
+ * Association Labels:
+ * - "Recommendation": Default label for Referral ↔ Company associations
+ * - "Selected_Referral": Label for Referral ↔ Company when client_interest == "Selected"
  *
  * Computed fields set by this workflow:
  * - hubspot_owner_id: from Deal.hubspot_owner_id
@@ -281,8 +284,11 @@ async function createOrUpdateReferral(
  * Build list of associations to create
  *
  * Supports:
+ * - Deal ↔ Company (always created when referral is created)
  * - Multiple sessions (sessionIds array)
- * - Selected billing session with "Selected_Referral" label when client_interest == "Selected"
+ * - Association labels:
+ *   - "Recommendation" for Referral ↔ Company (default)
+ *   - "Selected_Referral" for Referral ↔ Company when client_interest == "Selected"
  */
 function buildAssociationSpecs(
   referralId: string,
@@ -298,10 +304,25 @@ function buildAssociationSpecs(
     toType: 'deals',
   });
 
-  // Always: Referral ↔ Company
+  // Always: Referral ↔ Company with appropriate label
+  // Use "Selected_Referral" label when client_interest is "Selected", otherwise "Recommendation"
+  const companyLabel = isClientInterestSelected(input.clientInterest)
+    ? 'Selected_Referral'
+    : 'Recommendation';
+
   specs.push({
     fromId: referralId,
     fromType: config.objectTypes.referral,
+    toId: input.companyId,
+    toType: 'companies',
+    label: companyLabel,
+  });
+
+  // Always: Deal ↔ Company (idempotent - won't create duplicates)
+  // Every referral should link its deal to its company
+  specs.push({
+    fromId: input.dealId,
+    fromType: 'deals',
     toId: input.companyId,
     toType: 'companies',
   });
@@ -331,32 +352,17 @@ function buildAssociationSpecs(
     allSessionIds.add(input.sessionId);
   }
 
-  // Create associations for all sessions
+  // Create associations for all sessions (no special labels for sessions)
   for (const sessionId of allSessionIds) {
-    // Check if this is the selected billing session AND client interest is "Selected"
-    const isSelectedBillingSession =
-      isClientInterestSelected(input.clientInterest) &&
-      input.selectedBillingSessionId === sessionId;
-
     specs.push({
       fromId: referralId,
       fromType: config.objectTypes.referral,
       toId: sessionId,
       toType: config.objectTypes.session,
-      // Use "Selected_Referral" label for the billing session when client interest is Selected
-      label: isSelectedBillingSession ? 'Selected_Referral' : undefined,
     });
   }
 
   return specs;
-}
-
-/**
- * Check if deal already has an associated company
- */
-async function dealHasCompany(dealId: string): Promise<boolean> {
-  const companyIds = await getAssociatedIds('deals', dealId, 'companies');
-  return companyIds.length > 0;
 }
 
 // ============================================================================
@@ -466,6 +472,7 @@ export async function createReferralWorkflow(
   }
 
   // Step 5: Create associations (idempotent)
+  // This includes: Referral↔Deal, Referral↔Company (with label), Deal↔Company, Program, Sessions
   const associationSpecs = buildAssociationSpecs(referralId, input);
   const associationResult = await createAssociationsBatch(associationSpecs);
 
@@ -477,35 +484,12 @@ export async function createReferralWorkflow(
     console.warn('[workflow] Some associations failed:', associationResult.failed);
   }
 
-  // Step 6: Optionally associate Deal ↔ Company
-  let dealCompanyAssociated = false;
+  // Check if Deal↔Company was created (it's in the association specs)
+  const dealCompanyAssociated = associationResult.successful.some(
+    (spec) => spec.fromType === 'deals' && spec.toType === 'companies'
+  );
 
-  if (input.associateDealToCompany) {
-    // Check if deal already has a company
-    const hasCompany = await dealHasCompany(input.dealId);
-
-    if (!hasCompany) {
-      const dealCompanyResult = await createAssociationsBatch([
-        {
-          fromId: input.dealId,
-          fromType: 'deals',
-          toId: input.companyId,
-          toType: 'companies',
-        },
-      ]);
-
-      if (dealCompanyResult.allSucceeded) {
-        dealCompanyAssociated = true;
-        console.log(`[workflow] Created Deal ↔ Company association: ${input.dealId} ↔ ${input.companyId}`);
-      } else {
-        errors.push('Failed to associate deal with company');
-      }
-    } else {
-      console.log(`[workflow] Deal ${input.dealId} already has associated company, skipping`);
-    }
-  }
-
-  // Step 7: Return structured result
+  // Step 6: Return structured result
   return {
     success: true,
     referralId,
