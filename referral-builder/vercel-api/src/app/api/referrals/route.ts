@@ -26,11 +26,13 @@
  * }
  *
  * Computed fields set on referral:
- * - company_name: from Company.name
  * - hubspot_owner_id: from Deal.hubspot_owner_id
  * - resend_requested: true if outreachStatus == "Resend"
  * - selected_session_start_date, selected_session_end_date, selected_session_price:
  *   Only set when clientInterest == "Selected" AND selectedBillingSessionId provided
+ *
+ * Note: company_name is calculated by HubSpot from the associated Company.
+ * Note: If any properties are read-only in HubSpot, they are automatically skipped.
  *
  * Response:
  * {
