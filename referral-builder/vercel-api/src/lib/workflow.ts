@@ -358,10 +358,8 @@ export async function createReferralWorkflow(
   const payload = buildReferralPayload(input);
 
   // Add computed properties
-  // company_name - from Company
-  if (companyName) {
-    payload.properties[config.properties.referral.companyName] = companyName;
-  }
+  // NOTE: company_name is a calculated property in HubSpot - it's automatically
+  // computed from the associated Company, so we don't set it here.
 
   // hubspot_owner_id - from Deal
   if (dealData.ownerId) {
