@@ -95,42 +95,71 @@ export async function GET(
             }
           }
 
-          // Fetch program details
+          // Fetch program details - try multiple property names
           let programData: { id: string; name: string } | null = null;
           if (programIds.length > 0) {
+            const programNameProps = [
+              config.properties.program.name,
+              'program_name',
+              'hs_object_name',
+              'hs_name',
+            ];
             try {
               const program = await hubspotClient.crm.objects.basicApi.getById(
                 config.objectTypes.program,
                 programIds[0],
-                [config.properties.program.name]
+                programNameProps
               );
+              // Find first property that has a value
+              let programName = 'Unnamed Program';
+              for (const prop of programNameProps) {
+                if (program.properties[prop]) {
+                  programName = program.properties[prop];
+                  break;
+                }
+              }
               programData = {
                 id: program.id,
-                name: program.properties[config.properties.program.name] || 'Unnamed Program',
+                name: programName,
               };
             } catch (e) {
               console.warn(`[referrals] Failed to fetch program ${programIds[0]}`);
             }
           }
 
-          // Fetch session details
+          // Fetch session details - try multiple property names
           let sessionData: ReferralData['session'] = null;
           if (sessionIds.length > 0) {
+            const sessionNameProps = [
+              config.properties.session.name,
+              'session_name',
+              'hs_object_name',
+              'hs_name',
+            ];
+            const allSessionProps = [
+              ...sessionNameProps,
+              config.properties.session.startDate,
+              config.properties.session.endDate,
+              config.properties.session.price,
+              config.properties.session.weeks,
+            ];
             try {
               const session = await hubspotClient.crm.objects.basicApi.getById(
                 config.objectTypes.session,
                 sessionIds[0],
-                [
-                  config.properties.session.name,
-                  config.properties.session.startDate,
-                  config.properties.session.endDate,
-                  config.properties.session.price,
-                  config.properties.session.weeks,
-                ]
+                allSessionProps
               );
+              // Find first property that has a value for name
+              let sessionName = 'Unnamed Session';
+              for (const prop of sessionNameProps) {
+                if (session.properties[prop]) {
+                  sessionName = session.properties[prop];
+                  break;
+                }
+              }
               sessionData = {
                 id: session.id,
-                name: session.properties[config.properties.session.name] || 'Unnamed Session',
+                name: sessionName,
                 startDate: session.properties[config.properties.session.startDate] || undefined,
                 endDate: session.properties[config.properties.session.endDate] || undefined,
                 price: session.properties[config.properties.session.price] || undefined,

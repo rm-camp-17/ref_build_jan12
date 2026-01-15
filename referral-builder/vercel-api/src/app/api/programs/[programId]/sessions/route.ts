@@ -16,10 +16,41 @@ type Params = { programId: string };
 interface SessionData {
   id: string;
   name: string;
+  displayName: string; // Formatted: "Name (Start - End)" for dropdown
   startDate?: string;
   endDate?: string;
   price?: string;
   weeks?: string;
+}
+
+/**
+ * Format a date string for display (e.g., "2026-01-15" -> "Jan 15, 2026")
+ */
+function formatDate(dateStr: string | undefined): string | undefined {
+  if (!dateStr) return undefined;
+  try {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return dateStr;
+  }
+}
+
+/**
+ * Build display name for session dropdown: "Name (Start - End)"
+ */
+function buildSessionDisplayName(name: string, startDate?: string, endDate?: string): string {
+  const formattedStart = formatDate(startDate);
+  const formattedEnd = formatDate(endDate);
+
+  if (formattedStart && formattedEnd) {
+    return `${name} (${formattedStart} - ${formattedEnd})`;
+  } else if (formattedStart) {
+    return `${name} (${formattedStart})`;
+  } else if (formattedEnd) {
+    return `${name} (ends ${formattedEnd})`;
+  }
+  return name;
 }
 
 export async function GET(
@@ -89,11 +120,15 @@ export async function GET(
             );
           }
 
+          const startDate = session.properties[config.properties.session.startDate] || undefined;
+          const endDate = session.properties[config.properties.session.endDate] || undefined;
+
           return {
             id: session.id,
             name: displayName,
-            startDate: session.properties[config.properties.session.startDate] || undefined,
-            endDate: session.properties[config.properties.session.endDate] || undefined,
+            displayName: buildSessionDisplayName(displayName, startDate, endDate),
+            startDate,
+            endDate,
             price: session.properties[config.properties.session.price] || undefined,
             weeks: session.properties[config.properties.session.weeks] || undefined,
           };
@@ -102,6 +137,7 @@ export async function GET(
           return {
             id: sessionId,
             name: `Session ${sessionId}`,
+            displayName: `Session ${sessionId}`,
           };
         }
       })

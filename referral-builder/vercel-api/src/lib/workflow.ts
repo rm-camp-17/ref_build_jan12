@@ -73,11 +73,12 @@ interface CreateOrUpdateResult {
 // ============================================================================
 
 /**
- * Fetch Deal to get owner ID and other properties
+ * Fetch Deal to get owner ID, name, and other properties
  */
 async function fetchDealData(dealId: string): Promise<{
   ownerId?: string;
   dealKey?: string;
+  dealName?: string;
   year?: string;
 }> {
   try {
@@ -85,10 +86,13 @@ async function fetchDealData(dealId: string): Promise<{
       'hubspot_owner_id',
       config.properties.deal.key,
       config.properties.deal.year,
+      config.properties.deal.name,
+      'dealname', // Standard HubSpot deal name property
     ]);
     return {
       ownerId: deal.properties.hubspot_owner_id || undefined,
       dealKey: deal.properties[config.properties.deal.key] || undefined,
+      dealName: deal.properties[config.properties.deal.name] || deal.properties.dealname || undefined,
       year: deal.properties[config.properties.deal.year] || undefined,
     };
   } catch (error: any) {
@@ -96,6 +100,26 @@ async function fetchDealData(dealId: string): Promise<{
     // Return empty - don't fail the workflow for this
     return {};
   }
+}
+
+/**
+ * Build referral display name: "Child Name & Company Name - Date"
+ */
+function buildReferralName(dealName?: string, companyName?: string): string {
+  const today = new Date().toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+
+  const parts: string[] = [];
+  if (dealName) parts.push(dealName);
+  if (companyName) parts.push(companyName);
+
+  if (parts.length === 0) {
+    return `Referral - ${today}`;
+  }
+  return `${parts.join(' & ')} - ${today}`;
 }
 
 /**
@@ -352,13 +376,16 @@ function buildAssociationSpecs(
     allSessionIds.add(input.sessionId);
   }
 
-  // Create associations for all sessions (no special labels for sessions)
+  // Create associations for all sessions
+  // Use "Selected_Referral" label when client_interest is "Selected"
+  const isSelected = isClientInterestSelected(input.clientInterest);
   for (const sessionId of allSessionIds) {
     specs.push({
       fromId: referralId,
       fromType: config.objectTypes.referral,
       toId: sessionId,
       toType: config.objectTypes.session,
+      label: isSelected ? 'Selected_Referral' : undefined,
     });
   }
 
@@ -427,6 +454,13 @@ export async function createReferralWorkflow(
   const payload = buildReferralPayload(input);
 
   // Add computed properties
+
+  // referral_name - "Child Name & Company Name - Date"
+  payload.properties[config.properties.referral.name] = buildReferralName(
+    dealData.dealName,
+    companyName
+  );
+
   // NOTE: company_name is a calculated property in HubSpot - it's automatically
   // computed from the associated Company, so we don't set it here.
 
