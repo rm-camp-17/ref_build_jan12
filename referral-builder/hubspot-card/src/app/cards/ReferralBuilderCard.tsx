@@ -73,14 +73,6 @@ interface ReferralRow {
   note?: string;
   createdAt?: string;
   company?: { id?: string; name?: string } | null;
-  program?: { id?: string; name?: string } | null;
-  session?: {
-    id?: string;
-    name?: string;
-    startDate?: string;
-    endDate?: string;
-    price?: string;
-  } | null;
 }
 
 interface DealCompany {
@@ -124,12 +116,6 @@ function ReferralBuilderCard({ context, actions }: any) {
   const [companyQuery, setCompanyQuery] = useState("");
   const [companyOptions, setCompanyOptions] = useState<Option[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
-
-  // Program/Session state
-  const [programOptions, setProgramOptions] = useState<Option[]>([]);
-  const [selectedProgramId, setSelectedProgramId] = useState("");
-  const [sessionOptions, setSessionOptions] = useState<Option[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState("");
 
   // Form fields with defaults
   const [selectedStatus, setSelectedStatus] = useState(DEFAULTS.REFERRAL_STATUS);
@@ -257,18 +243,11 @@ function ReferralBuilderCard({ context, actions }: any) {
       // Pre-select company if exactly one and no selection yet
       if (companies.length === 1 && !selectedCompanyId) {
         setSelectedCompanyId(companies[0].id);
-        // Load programs for pre-selected company
-        const programData = await apiRequest(`/api/companies/${companies[0].id}/programs`);
-        const opts: Option[] = (programData?.results || []).map((p: any) => ({
-          label: p.name || `Program ${p.id}`,
-          value: String(p.id),
-        }));
-        setProgramOptions(opts);
       }
     } catch (e: any) {
       console.error("Failed to load deal companies:", e.message);
     }
-  }, [dealId, selectedCompanyId, hubspotCrmRequest, apiRequest]);
+  }, [dealId, selectedCompanyId, hubspotCrmRequest]);
 
   /**
    * Load property definitions (enum options)
@@ -321,45 +300,6 @@ function ReferralBuilderCard({ context, actions }: any) {
     setCompanyOptions(opts);
   }, [companyQuery, apiRequest]);
 
-  /**
-   * Load programs for selected company
-   */
-  const loadPrograms = useCallback(async (companyId: string) => {
-    setProgramOptions([]);
-    setSelectedProgramId("");
-    setSessionOptions([]);
-    setSelectedSessionId("");
-
-    if (!companyId) return;
-
-    const data = await apiRequest(`/api/companies/${companyId}/programs`);
-    const opts: Option[] = (data?.results || []).map((p: any) => ({
-      label: p.name || `Program ${p.id}`,
-      value: String(p.id),
-    }));
-
-    setProgramOptions(opts);
-  }, [apiRequest]);
-
-  /**
-   * Load sessions for selected program
-   */
-  const loadSessions = useCallback(async (programId: string) => {
-    setSessionOptions([]);
-    setSelectedSessionId("");
-
-    if (!programId) return;
-
-    const data = await apiRequest(`/api/programs/${programId}/sessions`);
-    const opts: Option[] = (data?.results || []).map((s: any) => ({
-      // Use displayName from API (includes name + dates), fallback to name
-      label: s.displayName || s.name || `Session ${s.id}`,
-      value: String(s.id),
-    }));
-
-    setSessionOptions(opts);
-  }, [apiRequest]);
-
   // =========================================================================
   // Form Actions
   // =========================================================================
@@ -387,8 +327,6 @@ function ReferralBuilderCard({ context, actions }: any) {
       const payload = {
         dealId,
         companyId: selectedCompanyId,
-        programId: selectedProgramId || undefined,
-        sessionId: selectedSessionId || undefined,
         note: note || undefined,
         outreachStatus: selectedStatus,
         clientInterest: selectedInterest,
@@ -412,12 +350,8 @@ function ReferralBuilderCard({ context, actions }: any) {
       // Clear form
       setNote("");
       setSelectedCompanyId("");
-      setSelectedProgramId("");
-      setSelectedSessionId("");
       setCompanyQuery("");
       setCompanyOptions([]);
-      setProgramOptions([]);
-      setSessionOptions([]);
       setSelectedStatus(DEFAULTS.REFERRAL_STATUS);
       setSelectedInterest(DEFAULTS.CLIENT_INTEREST);
 
@@ -431,8 +365,6 @@ function ReferralBuilderCard({ context, actions }: any) {
   }, [
     dealId,
     selectedCompanyId,
-    selectedProgramId,
-    selectedSessionId,
     note,
     selectedStatus,
     selectedInterest,
@@ -537,7 +469,7 @@ function ReferralBuilderCard({ context, actions }: any) {
   // =========================================================================
 
   return (
-    <Flex direction="column" gap="lg">
+    <Flex direction="column" gap="sm">
       <Heading>Referral Builder</Heading>
 
       {/* Deal Info */}
@@ -566,7 +498,7 @@ function ReferralBuilderCard({ context, actions }: any) {
       <Divider />
 
       {/* Two-Column Layout */}
-      <Flex direction="row" gap="xl" wrap="wrap">
+      <Flex direction="row" gap="md" wrap="wrap">
         {/* LEFT: Create Form */}
         <Box flex={1}>
           <Heading level={3}>Create Referral</Heading>
@@ -604,17 +536,9 @@ function ReferralBuilderCard({ context, actions }: any) {
               label="Company *"
               options={companyOptions}
               value={selectedCompanyId}
-              onChange={async (val: string) => {
+              onChange={(val: string) => {
                 setSelectedCompanyId(val);
                 setError(null);
-                setBusy(true);
-                try {
-                  await loadPrograms(val);
-                } catch (e: any) {
-                  setError(e?.message || "Failed to load programs");
-                } finally {
-                  setBusy(false);
-                }
               }}
               required
             />
@@ -629,33 +553,6 @@ function ReferralBuilderCard({ context, actions }: any) {
                 Also associate this company to the deal
               </Checkbox>
             )}
-
-            <Select
-              name="program"
-              label="Program (optional)"
-              options={programOptions}
-              value={selectedProgramId}
-              onChange={async (val: string) => {
-                setSelectedProgramId(val);
-                setError(null);
-                setBusy(true);
-                try {
-                  await loadSessions(val);
-                } catch (e: any) {
-                  setError(e?.message || "Failed to load sessions");
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            />
-
-            <Select
-              name="session"
-              label="Session (optional)"
-              options={sessionOptions}
-              value={selectedSessionId}
-              onChange={(val: string) => setSelectedSessionId(val)}
-            />
 
             <Select
               name="status"
@@ -692,7 +589,8 @@ function ReferralBuilderCard({ context, actions }: any) {
               label="Note to company"
               value={note}
               onChange={(val: string) => setNote(val)}
-              placeholder="Optional note..."
+              rows={8}
+              placeholder={"Lily is sweet, a little shy at first, warms up fast. Plays piano, loves to read, has done a couple school plays and wants more of that. Not sporty but curious and open to trying new things. Had a rough patch socially last year at a new school so looking for a warm cabin environment.\n\nMom Karen has a clear picture of what she wants: arts-forward, traditional, a place where a kid who reads during free period isn't out of place. Her own camp experience wasn't great and that's clearly still in the back of her mind. She needs to feel like the camp will embrace her kid and proactively communicate. Dad is supportive but did not attend camp.\n\nConnecticut family, four weeks minimum, flexible on budget. Younger brother is 6 and will likely join in a few years."}
             />
 
             <Button
@@ -750,7 +648,7 @@ function ReferralBuilderCard({ context, actions }: any) {
           )}
 
           {!busy && referrals.length > 0 && (
-            <Flex direction="column" gap="md">
+            <Flex direction="column" gap="sm">
               {referrals.map((r) => (
                 <ReferralCard
                   key={r.id}
@@ -817,10 +715,6 @@ function ReferralCard({
       <Flex direction="column" gap="sm">
         <Text format={{ fontWeight: "bold" }}>
           {referral.company?.name || "Unknown Company"}
-        </Text>
-
-        <Text variant="microcopy">
-          Program: {referral.program?.name || "N/A"} | Session: {referral.session?.name || "N/A"}
         </Text>
 
         {referral.createdAt && (

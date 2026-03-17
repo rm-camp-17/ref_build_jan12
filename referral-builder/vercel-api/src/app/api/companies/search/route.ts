@@ -8,6 +8,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { hubspotClient } from '@/lib/hubspot';
+import { config } from '@/lib/config';
 
 interface CompanyData {
   id: string;
@@ -36,10 +37,15 @@ export async function GET(req: NextRequest) {
               operator: 'CONTAINS_TOKEN' as any,
               value: query,
             },
+            {
+              propertyName: config.properties.company.status,
+              operator: 'EQ' as any,
+              value: 'Active',
+            },
           ],
         },
       ],
-      properties: ['name'],
+      properties: ['name', config.properties.company.status],
       sorts: ['name'],
       after: '0',
       limit,

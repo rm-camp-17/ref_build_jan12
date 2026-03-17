@@ -59,6 +59,9 @@ export const config = {
       year: process.env.HS_DEAL_YEAR_PROP || 'deal_year',
       name: process.env.HS_DEAL_NAME_PROP || 'dealname', // Usually contains child's name
     },
+    company: {
+      status: process.env.HS_COMPANY_STATUS_PROP || 'company_status',
+    },
     program: {
       name: process.env.HS_PROGRAM_NAME_PROP || 'name',
     },
