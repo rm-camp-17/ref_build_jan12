@@ -3,35 +3,12 @@
  *
  * Fetches all referrals associated with the specified deal,
  * including related company, program, and session details.
- *
- * HubSpot SDK v11.x compatible with correct API signatures.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { hubspotClient } from '@/lib/hubspot';
-import { config } from '@/lib/config';
-import { getAssociatedIds } from '@/lib/associations';
+import { fetchReferralsForDeal } from '@/lib/referrals';
 
 type Params = { dealId: string };
-
-interface ReferralData {
-  id: string;
-  referralKey: string | null;
-  outreachStatus: string | null;
-  clientInterest: string | null;
-  note: string;
-  createdAt: string | null;
-  company: { id: string; name: string } | null;
-  program: { id: string; name: string } | null;
-  session: {
-    id: string;
-    name: string;
-    startDate?: string;
-    endDate?: string;
-    price?: string;
-    weeks?: string;
-  } | null;
-}
 
 export async function GET(
   req: NextRequest,
@@ -47,6 +24,7 @@ export async function GET(
   }
 
   try {
+    const validReferrals = await fetchReferralsForDeal(dealId);
     // Get referral IDs associated with deal using v4 API
     const referralIds = await getAssociatedIds('deals', dealId, config.objectTypes.referral);
 
