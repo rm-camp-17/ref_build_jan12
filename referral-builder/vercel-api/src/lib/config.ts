@@ -60,7 +60,7 @@ export const config = {
       name: process.env.HS_DEAL_NAME_PROP || 'dealname', // Usually contains child's name
     },
     company: {
-      status: process.env.HS_COMPANY_STATUS_PROP || 'company_status',
+      status: process.env.HS_COMPANY_STATUS_PROP || 'partner_status',
     },
     program: {
       name: process.env.HS_PROGRAM_NAME_PROP || 'name',

@@ -58,18 +58,27 @@ export async function GET(
     const referralResults = await Promise.all(
       referralIds.map(async (referralId: string) => {
         try {
-          // Fetch referral with properties
-          const referral = await hubspotClient.crm.objects.basicApi.getById(
-            config.objectTypes.referral,
-            referralId,
-            [
-              config.properties.referral.key,
-              config.properties.referral.outreach,
-              config.properties.referral.interest,
-              config.properties.referral.note,
-              config.properties.referral.emailLastSentDatetime,
-            ]
-          );
+          // Fetch referral with properties (try with send date, fall back without)
+          const baseProps = [
+            config.properties.referral.key,
+            config.properties.referral.outreach,
+            config.properties.referral.interest,
+            config.properties.referral.note,
+          ];
+          let referral;
+          try {
+            referral = await hubspotClient.crm.objects.basicApi.getById(
+              config.objectTypes.referral,
+              referralId,
+              [...baseProps, config.properties.referral.emailLastSentDatetime],
+            );
+          } catch {
+            referral = await hubspotClient.crm.objects.basicApi.getById(
+              config.objectTypes.referral,
+              referralId,
+              baseProps,
+            );
+          }
 
           // Get associated objects using v4 API
           const [companyIds, programIds, sessionIds] = await Promise.all([
@@ -176,7 +185,7 @@ export async function GET(
             outreachStatus: referral.properties[config.properties.referral.outreach],
             clientInterest: referral.properties[config.properties.referral.interest],
             note: referral.properties[config.properties.referral.note] || '',
-            createdAt: referral.properties[config.properties.referral.emailLastSentDatetime],
+            createdAt: referral.properties[config.properties.referral.emailLastSentDatetime] || null,
             company: companyData,
             program: programData,
             session: sessionData,
