@@ -719,7 +719,7 @@ function ReferralCard({
 
         {referral.createdAt && (
           <Text variant="microcopy">
-            Created: {new Date(referral.createdAt).toLocaleDateString()}
+            Sent: {new Date(referral.createdAt).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York', timeZoneName: 'short' })}
           </Text>
         )}
 

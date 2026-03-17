@@ -67,7 +67,7 @@ export async function GET(
               config.properties.referral.outreach,
               config.properties.referral.interest,
               config.properties.referral.note,
-              'hs_createdate',
+              config.properties.referral.emailLastSentDatetime,
             ]
           );
 
@@ -176,7 +176,7 @@ export async function GET(
             outreachStatus: referral.properties[config.properties.referral.outreach],
             clientInterest: referral.properties[config.properties.referral.interest],
             note: referral.properties[config.properties.referral.note] || '',
-            createdAt: referral.properties.hs_createdate,
+            createdAt: referral.properties[config.properties.referral.emailLastSentDatetime],
             company: companyData,
             program: programData,
             session: sessionData,
