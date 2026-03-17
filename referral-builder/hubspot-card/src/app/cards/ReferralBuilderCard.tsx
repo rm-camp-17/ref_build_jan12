@@ -80,6 +80,33 @@ interface DealCompany {
   name?: string;
 }
 
+interface HouseholdReferral {
+  id: string;
+  referralKey?: string;
+  outreachStatus?: string;
+  clientInterest?: string;
+  note?: string;
+  createdAt?: string;
+  company?: { id?: string; name?: string } | null;
+  program?: { id?: string; name?: string } | null;
+  session?: { id?: string; name?: string } | null;
+}
+
+interface HouseholdDeal {
+  dealId: string;
+  dealName: string;
+  dealKey: string;
+  dealYear: string;
+  childId: string | null;
+  isSameChild: boolean;
+  referrals: HouseholdReferral[];
+}
+
+interface HouseholdData {
+  currentDealChildId: string | null;
+  householdDeals: HouseholdDeal[];
+}
+
 // ============================================================================
 // Main Component
 // ============================================================================
@@ -124,6 +151,16 @@ function ReferralBuilderCard({ context, actions }: any) {
 
   // Association checkbox
   const [associateToDeal, setAssociateToDeal] = useState(true);
+
+  // Household History state
+  const [householdData, setHouseholdData] = useState<HouseholdData | null>(null);
+  const [householdLoading, setHouseholdLoading] = useState(false);
+  const [householdExpanded, setHouseholdExpanded] = useState(false);
+
+  // Copy-from state (tracks when user clicks "Copy to This Deal")
+  const [copiedFromDealKey, setCopiedFromDealKey] = useState<string | undefined>();
+  const [copiedFromYear, setCopiedFromYear] = useState<string | undefined>();
+  const [copySource, setCopySource] = useState<string | null>(null);
 
   // =========================================================================
   // Computed values
@@ -300,9 +337,54 @@ function ReferralBuilderCard({ context, actions }: any) {
     setCompanyOptions(opts);
   }, [companyQuery, apiRequest]);
 
+  /**
+   * Load household referrals (all referrals across sibling deals)
+   */
+  const loadHouseholdReferrals = useCallback(async () => {
+    if (!dealId) return;
+    setHouseholdLoading(true);
+    try {
+      const data = await apiRequest(`/api/deals/${dealId}/household-referrals`);
+      setHouseholdData(data || null);
+    } catch (e: any) {
+      console.error("Failed to load household referrals:", e.message);
+      // Non-critical — don't set global error
+    } finally {
+      setHouseholdLoading(false);
+    }
+  }, [dealId, apiRequest]);
+
   // =========================================================================
   // Form Actions
   // =========================================================================
+
+  /**
+   * Handle "Copy to This Deal" — pre-fills the create form from a household referral
+   */
+  const handleCopyReferral = useCallback((
+    sourceReferral: HouseholdReferral,
+    sourceDeal: HouseholdDeal
+  ) => {
+    if (sourceReferral.company?.id) {
+      setSelectedCompanyId(sourceReferral.company.id);
+      setCompanyOptions([{
+        label: sourceReferral.company.name || `Company ${sourceReferral.company.id}`,
+        value: sourceReferral.company.id,
+      }]);
+      setCompanyQuery(sourceReferral.company.name || "");
+    }
+
+    if (sourceReferral.note) {
+      setNote(sourceReferral.note);
+    }
+
+    setSelectedStatus(DEFAULTS.REFERRAL_STATUS);
+    setSelectedInterest(DEFAULTS.CLIENT_INTEREST);
+
+    setCopiedFromDealKey(sourceDeal.dealKey);
+    setCopiedFromYear(sourceDeal.dealYear);
+    setCopySource(`${sourceDeal.dealName} ${sourceDeal.dealYear}`);
+  }, []);
 
   /**
    * Create referral (with double-submit prevention)
@@ -331,6 +413,8 @@ function ReferralBuilderCard({ context, actions }: any) {
         outreachStatus: selectedStatus,
         clientInterest: selectedInterest,
         associateDealToCompany: showAssociateCheckbox && associateToDeal,
+        copiedFromDealKey: copiedFromDealKey || undefined,
+        copiedFromYear: copiedFromYear ? Number(copiedFromYear) : undefined,
       };
 
       console.log("[Frontend] Creating referral with payload:", payload);
@@ -354,9 +438,12 @@ function ReferralBuilderCard({ context, actions }: any) {
       setCompanyOptions([]);
       setSelectedStatus(DEFAULTS.REFERRAL_STATUS);
       setSelectedInterest(DEFAULTS.CLIENT_INTEREST);
+      setCopiedFromDealKey(undefined);
+      setCopiedFromYear(undefined);
+      setCopySource(null);
 
       // Refresh data
-      await Promise.all([loadReferrals(), loadDealCompanies()]);
+      await Promise.all([loadReferrals(), loadDealCompanies(), loadHouseholdReferrals()]);
     } catch (e: any) {
       setError(e?.message || "Failed to create referral");
     } finally {
@@ -370,10 +457,13 @@ function ReferralBuilderCard({ context, actions }: any) {
     selectedInterest,
     showAssociateCheckbox,
     associateToDeal,
+    copiedFromDealKey,
+    copiedFromYear,
     apiRequest,
     actions,
     loadReferrals,
     loadDealCompanies,
+    loadHouseholdReferrals,
   ]);
 
   /**
@@ -417,6 +507,7 @@ function ReferralBuilderCard({ context, actions }: any) {
           loadReferrals(),
           loadPropertyDefinitions(),
           loadDealCompanies(),
+          loadHouseholdReferrals(),
         ]);
       } catch (e: any) {
         if (mounted) {
@@ -432,7 +523,7 @@ function ReferralBuilderCard({ context, actions }: any) {
     return () => {
       mounted = false;
     };
-  }, [dealId, loadReferrals, loadPropertyDefinitions, loadDealCompanies]);
+  }, [dealId, loadReferrals, loadPropertyDefinitions, loadDealCompanies, loadHouseholdReferrals]);
 
   // Clear success message after delay
   useEffect(() => {
@@ -502,6 +593,12 @@ function ReferralBuilderCard({ context, actions }: any) {
         {/* LEFT: Create Form */}
         <Box flex={1}>
           <Heading level={3}>Create Referral</Heading>
+
+          {copySource && (
+            <Alert title="Copying referral" variant="info">
+              Pre-filled from: {copySource}. Review and click Create Referral.
+            </Alert>
+          )}
 
           {/* Company Search */}
           <Flex direction="column" gap="sm">
@@ -663,7 +760,115 @@ function ReferralBuilderCard({ context, actions }: any) {
           )}
         </Box>
       </Flex>
+
+      {/* Household History Panel */}
+      <HouseholdHistoryPanel
+        householdData={householdData}
+        householdLoading={householdLoading}
+        householdExpanded={householdExpanded}
+        onToggleExpanded={() => setHouseholdExpanded(!householdExpanded)}
+        onCopyReferral={handleCopyReferral}
+      />
     </Flex>
+  );
+}
+
+// ============================================================================
+// Household History Panel Sub-Component
+// ============================================================================
+
+interface HouseholdHistoryPanelProps {
+  householdData: HouseholdData | null;
+  householdLoading: boolean;
+  householdExpanded: boolean;
+  onToggleExpanded: () => void;
+  onCopyReferral: (referral: HouseholdReferral, deal: HouseholdDeal) => void;
+}
+
+function HouseholdHistoryPanel({
+  householdData,
+  householdLoading,
+  householdExpanded,
+  onToggleExpanded,
+  onCopyReferral,
+}: HouseholdHistoryPanelProps) {
+  if (!householdData || householdData.householdDeals.length === 0) {
+    if (householdLoading) {
+      return (
+        <Box>
+          <Divider />
+          <LoadingSpinner label="Loading household history..." size="small" />
+        </Box>
+      );
+    }
+    return null;
+  }
+
+  const totalReferrals = householdData.householdDeals.reduce(
+    (sum, d) => sum + d.referrals.length,
+    0
+  );
+
+  return (
+    <Box>
+      <Divider />
+      <Flex direction="row" justify="space-between" align="center">
+        <Heading level={3}>
+          Household History ({totalReferrals} referral{totalReferrals !== 1 ? "s" : ""} from{" "}
+          {householdData.householdDeals.length} other deal{householdData.householdDeals.length !== 1 ? "s" : ""})
+        </Heading>
+        <Button size="small" variant="secondary" onClick={onToggleExpanded}>
+          {householdExpanded ? "Collapse" : "Expand"}
+        </Button>
+      </Flex>
+
+      {householdExpanded && (
+        <Flex direction="column" gap="md">
+          {householdData.householdDeals.map((deal) => (
+            <Box key={deal.dealId}>
+              <Flex direction="row" gap="sm" align="center" wrap="wrap">
+                <Text format={{ fontWeight: "bold" }}>
+                  {deal.dealName || `Deal ${deal.dealId}`}
+                  {deal.dealYear ? ` — ${deal.dealYear}` : ""}
+                </Text>
+                <Tag variant={deal.isSameChild ? "default" : "warning"}>
+                  {deal.isSameChild ? "Same Child" : "Sibling"}
+                </Tag>
+              </Flex>
+
+              {deal.referrals.length === 0 ? (
+                <Text variant="microcopy">No referrals on this deal</Text>
+              ) : (
+                <Flex direction="column" gap="sm">
+                  {deal.referrals.map((ref) => (
+                    <Flex key={ref.id} direction="row" justify="space-between" align="center">
+                      <Flex direction="column" gap="flush">
+                        <Text>{ref.company?.name || "Unknown Company"}</Text>
+                        <Text variant="microcopy">
+                          {ref.outreachStatus || "No status"}
+                          {ref.clientInterest ? ` · ${ref.clientInterest}` : ""}
+                          {ref.createdAt
+                            ? ` · ${new Date(ref.createdAt).toLocaleDateString()}`
+                            : ""}
+                        </Text>
+                      </Flex>
+                      <Button
+                        size="small"
+                        variant="secondary"
+                        onClick={() => onCopyReferral(ref, deal)}
+                      >
+                        Copy to This Deal
+                      </Button>
+                    </Flex>
+                  ))}
+                </Flex>
+              )}
+              <Divider />
+            </Box>
+          ))}
+        </Flex>
+      )}
+    </Box>
   );
 }
 

@@ -19,6 +19,8 @@ export const config = {
     program: process.env.HS_PROGRAM_OBJECT_TYPE || 'p_program',
     session: process.env.HS_SESSION_OBJECT_TYPE || 'p_session',
     referral: process.env.HS_REFERRAL_OBJECT_TYPE || '2-55790899',
+    household: process.env.HS_HOUSEHOLD_OBJECT_TYPE || '2-53610744',
+    child: process.env.HS_CHILD_OBJECT_TYPE || '2-50911061',
   },
 
   // Property internal names by object type
