@@ -589,8 +589,8 @@ function ReferralBuilderCard({ context, actions }: any) {
               label="Note to company"
               value={note}
               onChange={(val: string) => setNote(val)}
-              rows={8}
-              placeholder={"Lily is sweet, a little shy at first, warms up fast. Plays piano, loves to read, has done a couple school plays and wants more of that. Not sporty but curious and open to trying new things. Had a rough patch socially last year at a new school so looking for a warm cabin environment.\n\nMom Karen has a clear picture of what she wants: arts-forward, traditional, a place where a kid who reads during free period isn't out of place. Her own camp experience wasn't great and that's clearly still in the back of her mind. She needs to feel like the camp will embrace her kid and proactively communicate. Dad is supportive but did not attend camp.\n\nConnecticut family, four weeks minimum, flexible on budget. Younger brother is 6 and will likely join in a few years."}
+              rows={12}
+              placeholder={"EXAMPLE: Lily is sweet, a little shy at first, warms up fast. Plays piano, loves to read, has done a couple school plays and wants more of that. Not sporty but curious and open to trying new things. Had a rough patch socially last year at a new school so looking for a warm cabin environment.\n\nMom Karen has a clear picture of what she wants: arts-forward, traditional, a place where a kid who reads during free period isn't out of place. Her own camp experience wasn't great and that's clearly still in the back of her mind. She needs to feel like the camp will embrace her kid and proactively communicate. Dad is supportive but did not attend camp.\n\nConnecticut family, four weeks minimum, flexible on budget. Younger brother is 6 and will likely join in a few years."}
             />
 
             <Button
