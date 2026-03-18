@@ -60,6 +60,35 @@ const FALLBACK_INTEREST_OPTIONS: Option[] = [
 ];
 
 // ============================================================================
+// Tag Variant Helpers
+// ============================================================================
+
+function getStatusTagVariant(status: string): "default" | "success" | "warning" {
+  switch (status) {
+    case "Sent":
+      return "success";
+    case "Resend":
+    case "Draft":
+      return "warning";
+    default:
+      return "default";
+  }
+}
+
+function getInterestTagVariant(interest: string): "default" | "success" | "warning" {
+  switch (interest) {
+    case "Selected":
+    case "Shortlist":
+      return "success";
+    case "Unlikely":
+    case "Declined":
+      return "warning";
+    default:
+      return "default";
+  }
+}
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -565,13 +594,12 @@ function ReferralBuilderCard({ context, actions }: any) {
 
       {/* Deal Info */}
       <Flex direction="row" gap="sm" align="center" wrap="wrap">
-        <Tag>Deal ID: {dealId}</Tag>
         {dealHasCompany && (
           <Tag variant="success">
-            Company: {dealCompanies.map((c) => c.name || c.id).join(", ")}
+            {dealCompanies.map((c) => c.name || c.id).join(", ")}
           </Tag>
         )}
-        {!dealHasCompany && <Tag variant="warning">No company linked</Tag>}
+        {!dealHasCompany && <Tag variant="warning">No company linked to deal</Tag>}
       </Flex>
 
       {/* Error/Success Messages */}
@@ -848,7 +876,7 @@ function HouseholdHistoryPanel({
                           {ref.outreachStatus || "No status"}
                           {ref.clientInterest ? ` · ${ref.clientInterest}` : ""}
                           {ref.createdAt
-                            ? ` · ${new Date(ref.createdAt).toLocaleDateString()}`
+                            ? ` · Sent ${new Date(ref.createdAt).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York', timeZoneName: 'short' })}`
                             : ""}
                         </Text>
                       </Flex>
@@ -891,12 +919,12 @@ function ReferralCard({
   onUpdate,
   busy,
 }: ReferralCardProps) {
+  const [expanded, setExpanded] = useState(false);
   const [localStatus, setLocalStatus] = useState(referral.outreachStatus || "");
   const [localInterest, setLocalInterest] = useState(referral.clientInterest || "");
   const [localNote, setLocalNote] = useState(referral.note || "");
   const [saving, setSaving] = useState(false);
 
-  // Check if values have changed
   const hasChanges =
     localStatus !== (referral.outreachStatus || "") ||
     localInterest !== (referral.clientInterest || "") ||
@@ -910,17 +938,54 @@ function ReferralCard({
         client_interest: localInterest,
         referral_note_to_company: localNote,
       });
+      setExpanded(false);
     } finally {
       setSaving(false);
     }
   };
 
+  const handleCancel = () => {
+    setLocalStatus(referral.outreachStatus || "");
+    setLocalInterest(referral.clientInterest || "");
+    setLocalNote(referral.note || "");
+    setExpanded(false);
+  };
+
+  const notePreview =
+    referral.note && referral.note.length > 90
+      ? referral.note.substring(0, 90) + "..."
+      : referral.note;
+
   return (
     <Box>
       <Flex direction="column" gap="sm">
-        <Text format={{ fontWeight: "bold" }}>
-          {referral.company?.name || "Unknown Company"}
-        </Text>
+        {/* Header: Company name + Edit toggle */}
+        <Flex direction="row" justify="space-between" align="center">
+          <Text format={{ fontWeight: "bold" }}>
+            {referral.company?.name || "Unknown Company"}
+          </Text>
+          <Button
+            size="small"
+            variant="secondary"
+            onClick={() => (expanded ? handleCancel() : setExpanded(true))}
+          >
+            {expanded ? "Cancel" : "Edit"}
+          </Button>
+        </Flex>
+
+        {/* Status + Interest tags + Sent date */}
+        <Flex direction="row" gap="sm" align="center" wrap="wrap">
+          {referral.outreachStatus && (
+            <Tag variant={getStatusTagVariant(referral.outreachStatus)}>
+              {referral.outreachStatus}
+            </Tag>
+          )}
+          {referral.clientInterest && (
+            <Tag variant={getInterestTagVariant(referral.clientInterest)}>
+              {referral.clientInterest}
+            </Tag>
+          )}
+        </Flex>
 
         {referral.createdAt && (
           <Text variant="microcopy">
@@ -928,37 +993,48 @@ function ReferralCard({
           </Text>
         )}
 
-        <Select
-          name={`status-${referral.id}`}
-          label="Status"
-          options={statusOptions}
-          value={localStatus}
-          onChange={(val: string) => setLocalStatus(val)}
-        />
+        {/* Compact: note preview */}
+        {!expanded && notePreview && (
+          <Text variant="microcopy">{notePreview}</Text>
+        )}
 
-        <Select
-          name={`interest-${referral.id}`}
-          label="Interest"
-          options={interestOptions}
-          value={localInterest}
-          onChange={(val: string) => setLocalInterest(val)}
-        />
+        {/* Expanded: edit form */}
+        {expanded && (
+          <Flex direction="column" gap="sm">
+            <Select
+              name={`status-${referral.id}`}
+              label="Status"
+              options={statusOptions}
+              value={localStatus}
+              onChange={(val: string) => setLocalStatus(val)}
+            />
 
-        <TextArea
-          name={`note-${referral.id}`}
-          label="Note"
-          value={localNote}
-          onChange={(val: string) => setLocalNote(val)}
-        />
+            <Select
+              name={`interest-${referral.id}`}
+              label="Interest"
+              options={interestOptions}
+              value={localInterest}
+              onChange={(val: string) => setLocalInterest(val)}
+            />
 
-        <Button
-          size="small"
-          variant="primary"
-          disabled={busy || saving || !hasChanges}
-          onClick={handleSave}
-        >
-          {saving ? "Saving..." : "Save Changes"}
-        </Button>
+            <TextArea
+              name={`note-${referral.id}`}
+              label="Note"
+              value={localNote}
+              onChange={(val: string) => setLocalNote(val)}
+              rows={6}
+            />
+
+            <Button
+              size="small"
+              variant="primary"
+              disabled={busy || saving || !hasChanges}
+              onClick={handleSave}
+            >
+              {saving ? "Saving..." : "Save Changes"}
+            </Button>
+          </Flex>
+        )}
       </Flex>
       <Divider />
     </Box>
