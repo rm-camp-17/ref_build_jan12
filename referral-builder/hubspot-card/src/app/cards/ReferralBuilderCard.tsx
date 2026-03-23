@@ -24,6 +24,7 @@ import {
   LoadingSpinner,
   Alert,
   Tag,
+  StepIndicator,
 } from "@hubspot/ui-extensions";
 
 // ============================================================================
@@ -160,6 +161,10 @@ function ReferralBuilderCard({ context, actions }: any) {
   // Double-submit prevention
   const submitInProgress = useRef(false);
 
+  // Debounce timer for company search
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [searching, setSearching] = useState(false);
+
   // Data states
   const [referrals, setReferrals] = useState<ReferralRow[]>([]);
   const [dealCompanies, setDealCompanies] = useState<DealCompany[]>([]);
@@ -201,6 +206,9 @@ function ReferralBuilderCard({ context, actions }: any) {
   const canCreate = useMemo(() => {
     return Boolean(dealId && selectedCompanyId && !busy && !submitInProgress.current);
   }, [dealId, selectedCompanyId, busy]);
+
+  // Step indicator: 0 = Find Company, 1 = Set Details, 2 = Ready to Create
+  const formStep = !selectedCompanyId ? 0 : canCreate ? 2 : 1;
 
   // =========================================================================
   // API Helpers
@@ -562,6 +570,36 @@ function ReferralBuilderCard({ context, actions }: any) {
     }
   }, [successMessage]);
 
+  // Debounced auto-search when user types in company field
+  useEffect(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+
+    if (companyQuery.trim().length < 2) {
+      setCompanyOptions([]);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
+        await searchCompanies();
+      } catch (e: any) {
+        console.error("Auto-search failed:", e.message);
+      } finally {
+        setSearching(false);
+      }
+    }, 400);
+
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, [companyQuery, searchCompanies]);
+
   // =========================================================================
   // Render: Loading and Error States
   // =========================================================================
@@ -622,43 +660,33 @@ function ReferralBuilderCard({ context, actions }: any) {
         <Box flex={1}>
           <Heading level={3}>Create Referral</Heading>
 
+          <StepIndicator
+            currentStep={formStep}
+            stepNames={["Find Company", "Set Details", "Create"]}
+          />
+
           {copySource && (
             <Alert title="Copying referral" variant="info">
               Pre-filled from: {copySource}. Review and click Create Referral.
             </Alert>
           )}
 
-          {/* Company Search */}
           <Flex direction="column" gap="sm">
+            {/* Step 1: Find Company */}
             <Input
               name="companyQuery"
-              label="Search company"
+              label="Find a Company"
               value={companyQuery}
               onChange={(val: string) => setCompanyQuery(val)}
-              placeholder="Type company name..."
+              placeholder="e.g. Camp Sunshine, Timber Lake..."
+              description="Type at least 2 characters — results load automatically"
             />
-            <Button
-              variant="secondary"
-              size="small"
-              onClick={async () => {
-                setError(null);
-                setBusy(true);
-                try {
-                  await searchCompanies();
-                } catch (e: any) {
-                  setError(e?.message || "Search failed");
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              disabled={busy || !companyQuery.trim()}
-            >
-              Search
-            </Button>
+
+            {searching && <LoadingSpinner label="Searching..." size="small" />}
 
             <Select
               name="company"
-              label="Company *"
+              label="Select Company"
               options={companyOptions}
               value={selectedCompanyId}
               onChange={(val: string) => {
@@ -666,6 +694,13 @@ function ReferralBuilderCard({ context, actions }: any) {
                 setError(null);
               }}
               required
+              description={
+                searching
+                  ? "Searching..."
+                  : companyOptions.length > 0
+                  ? `${companyOptions.length} result${companyOptions.length !== 1 ? "s" : ""} found`
+                  : "Search results will appear here"
+              }
             />
 
             {/* Associate checkbox */}
@@ -679,19 +714,13 @@ function ReferralBuilderCard({ context, actions }: any) {
               </Checkbox>
             )}
 
+            {/* Step 2: Set Details */}
             <Select
               name="status"
               label="Referral Status"
               options={statusOptions}
               value={selectedStatus}
-              onChange={(val: string) => {
-                console.log("[Frontend] Status onChange received:", val);
-                setSelectedStatus(val);
-              }}
-              description={`Default: ${
-                statusOptions.find((o) => o.value === DEFAULTS.REFERRAL_STATUS)?.label ||
-                "Ready to Send"
-              }`}
+              onChange={(val: string) => setSelectedStatus(val)}
             />
 
             <Select
@@ -699,24 +728,26 @@ function ReferralBuilderCard({ context, actions }: any) {
               label="Client Interest"
               options={interestOptions}
               value={selectedInterest}
-              onChange={(val: string) => {
-                console.log("[Frontend] Interest onChange received:", val);
-                setSelectedInterest(val);
-              }}
-              description={`Default: ${
-                interestOptions.find((o) => o.value === DEFAULTS.CLIENT_INTEREST)?.label ||
-                "Active / considering"
-              }`}
+              onChange={(val: string) => setSelectedInterest(val)}
             />
 
             <TextArea
               name="note"
-              label="Note to company"
+              label="Note to Company"
               value={note}
               onChange={(val: string) => setNote(val)}
-              rows={12}
+              rows={6}
               placeholder={"EXAMPLE: Lily is sweet, a little shy at first, warms up fast. Plays piano, loves to read, has done a couple school plays and wants more of that. Not sporty but curious and open to trying new things. Had a rough patch socially last year at a new school so looking for a warm cabin environment.\n\nMom Karen has a clear picture of what she wants: arts-forward, traditional, a place where a kid who reads during free period isn't out of place. Her own camp experience wasn't great and that's clearly still in the back of her mind. She needs to feel like the camp will embrace her kid and proactively communicate. Dad is supportive but did not attend camp.\n\nConnecticut family, four weeks minimum, flexible on budget. Younger brother is 6 and will likely join in a few years."}
             />
+
+            {/* Step 3: Create */}
+            <Divider />
+
+            {canCreate && !copySource && (
+              <Alert title="Ready to submit" variant="success">
+                Review the details above, then click Create Referral.
+              </Alert>
+            )}
 
             <Button
               variant="primary"
@@ -732,7 +763,7 @@ function ReferralBuilderCard({ context, actions }: any) {
                 }
               }}
             >
-              {busy ? "Creating..." : "Create Referral"}
+              {busy ? "Creating..." : !selectedCompanyId ? "Select a company first" : "Create Referral"}
             </Button>
           </Flex>
         </Box>
