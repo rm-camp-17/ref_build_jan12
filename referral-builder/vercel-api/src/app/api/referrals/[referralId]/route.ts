@@ -7,6 +7,12 @@
  *     referral_status?: string (internal value)
  *     client_interest?: string (internal value)
  *     referral_note_to_company?: string
+ *   },
+ *   context?: {
+ *     dealId?: string       - Required for selection/de-selection transitions
+ *     companyId?: string    - Required for selection transitions
+ *     programId?: string    - Optional, for program name lookup
+ *     previousClientInterest?: string - Required to detect selection transitions
  *   }
  * }
  *
@@ -36,7 +42,7 @@ export async function PATCH(
   }
 
   // Parse request body
-  let body: unknown;
+  let body: any;
   try {
     body = await req.json();
   } catch (error) {
@@ -46,7 +52,7 @@ export async function PATCH(
     );
   }
 
-  // Validate input
+  // Validate input (validates properties, not context)
   const validation = validateUpdateReferralInput(body);
   if (!validation.valid || !validation.data) {
     return NextResponse.json(
@@ -59,8 +65,16 @@ export async function PATCH(
     );
   }
 
-  // Execute update workflow
-  const result = await updateReferralWorkflow(referralId, validation.data.properties);
+  // Extract context for selection/de-selection handling
+  const context = body?.context ? {
+    dealId: typeof body.context.dealId === 'string' ? body.context.dealId : undefined,
+    companyId: typeof body.context.companyId === 'string' ? body.context.companyId : undefined,
+    programId: typeof body.context.programId === 'string' ? body.context.programId : undefined,
+    previousClientInterest: typeof body.context.previousClientInterest === 'string' ? body.context.previousClientInterest : undefined,
+  } : undefined;
+
+  // Execute update workflow with context
+  const result = await updateReferralWorkflow(referralId, validation.data.properties, context);
 
   if (!result.success) {
     return NextResponse.json(

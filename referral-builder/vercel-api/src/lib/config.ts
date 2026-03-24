@@ -60,9 +60,16 @@ export const config = {
       key: process.env.HS_DEAL_KEY_PROP || 'deal_key',
       year: process.env.HS_DEAL_YEAR_PROP || 'year1',
       name: process.env.HS_DEAL_NAME_PROP || 'dealname', // Usually contains child's name
+      // Integration properties - written when referral is marked "Selected"
+      programId: process.env.HS_DEAL_PROGRAM_ID_PROP || 'program_id',
+      programName: process.env.HS_DEAL_PROGRAM_NAME_PROP || 'programname',
+      stage: 'dealstage',
+      tuitionAtEnrollment: 'tuition_at_enrollment',
     },
     company: {
       status: process.env.HS_COMPANY_STATUS_PROP || 'partner_status',
+      // Legacy ID used by Session Card for session lookup (maps to PostgreSQL companies.access_id)
+      programId: process.env.HS_COMPANY_PROGRAM_ID_PROP || 'programid',
     },
     program: {
       name: process.env.HS_PROGRAM_NAME_PROP || 'name',
@@ -74,6 +81,16 @@ export const config = {
       price: process.env.HS_SESSION_PRICE_PROP || 'price',
       weeks: process.env.HS_SESSION_WEEKS_PROP || 'weeks',
     },
+  },
+
+  // Pipeline stage configuration
+  // Stage IDs from the "Deal Pipeline" (pipeline ID: "default")
+  stages: {
+    tuitionUndecided: process.env.HS_STAGE_TUITION_UNDECIDED || '1282923123',
+    programSelected: process.env.HS_STAGE_PROGRAM_SELECTED || 'decisionmakerboughtin',
+    closedWon: process.env.HS_STAGE_CLOSED_WON || '1282918770',
+    // Tier 1 de-selection rollback target
+    recommendationPresented: process.env.HS_STAGE_RECOMMENDATION_PRESENTED || 'presentationscheduled',
   },
 
   // Default enum values (internal values, not labels)
