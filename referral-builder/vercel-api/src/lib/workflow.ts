@@ -469,6 +469,16 @@ export async function createReferralWorkflow(
     payload.properties[config.properties.referral.ownerId] = dealData.ownerId;
   }
 
+  // copied_from_year - always set on every referral, floor at current year
+  const currentYear = new Date().getFullYear();
+  const dealYear = dealData.year ? parseInt(dealData.year, 10) : NaN;
+  const referralYear = !isNaN(dealYear) && dealYear >= currentYear
+    ? dealYear
+    : input.copiedFromYear && input.copiedFromYear >= currentYear
+    ? input.copiedFromYear
+    : currentYear;
+  payload.properties[config.properties.referral.copiedYear] = String(referralYear);
+
   // resend_requested - computed from outreach status
   const outreachStatus = input.outreachStatus || payload.properties[config.properties.referral.outreach];
   payload.properties[config.properties.referral.resendRequested] = isResendRequested(outreachStatus)
