@@ -78,6 +78,7 @@ function getStatusTagVariant(status: string): "default" | "success" | "warning" 
 function getInterestTagVariant(interest: string): "default" | "success" | "warning" {
   switch (interest) {
     case "Selected":
+      return "success";
     case "Shortlist":
       return "success";
     case "Unlikely":
@@ -85,6 +86,19 @@ function getInterestTagVariant(interest: string): "default" | "success" | "warni
       return "warning";
     default:
       return "default";
+  }
+}
+
+/**
+ * Get a description of what a client interest status means for the pipeline.
+ * Shown inline next to the interest dropdown to communicate consequences.
+ */
+function getInterestPipelineNote(interest: string): string | null {
+  switch (interest) {
+    case "Selected":
+      return "Selected = advances deal to tuition entry";
+    default:
+      return null;
   }
 }
 
@@ -192,6 +206,9 @@ function ReferralBuilderCard({ context, actions }: any) {
   const [copiedFromDealKey, setCopiedFromDealKey] = useState<string | undefined>();
   const [copiedFromYear, setCopiedFromYear] = useState<string | undefined>();
   const [copySource, setCopySource] = useState<string | null>(null);
+
+  // Confirmation dialog state for "Selected" interest
+  const [pendingSelectedConfirm, setPendingSelectedConfirm] = useState(false);
 
   // =========================================================================
   // Computed values
@@ -457,9 +474,12 @@ function ReferralBuilderCard({ context, actions }: any) {
         body: payload,
       });
 
+      const dealUpdatedSuffix = data?.dealUpdated
+        ? ". The Session Selection tab is now active for tuition entry."
+        : "";
       const message = data?.created
-        ? `Referral created (ID: ${data?.referralId})`
-        : `Referral updated (ID: ${data?.referralId})`;
+        ? `Referral created${dealUpdatedSuffix}`
+        : `Referral updated${dealUpdatedSuffix}`;
 
       setSuccessMessage(message);
       actions?.addAlert?.({ type: "success", message });
@@ -499,6 +519,9 @@ function ReferralBuilderCard({ context, actions }: any) {
 
   /**
    * Update existing referral
+   *
+   * Passes deal context so the backend can handle selection/de-selection
+   * transitions (deal stage updates, three-tier de-selection logic).
    */
   const updateReferral = useCallback(async (
     referralId: string,
@@ -506,18 +529,33 @@ function ReferralBuilderCard({ context, actions }: any) {
   ) => {
     setError(null);
 
+    // Find the referral to get its current state + associated company
+    const referral = referrals.find((r) => r.id === referralId);
+
     try {
-      await apiRequest(`/api/referrals/${referralId}`, {
+      const data = await apiRequest(`/api/referrals/${referralId}`, {
         method: "PATCH",
-        body: { properties },
+        body: {
+          properties,
+          context: {
+            dealId,
+            companyId: referral?.company?.id,
+            previousClientInterest: referral?.clientInterest,
+          },
+        },
       });
 
-      actions?.addAlert?.({ type: "success", message: "Referral updated" });
-      await loadReferrals();
+      const isNowSelected = properties.client_interest === "Selected";
+      const message = isNowSelected
+        ? "Referral marked Selected. The Session Selection tab is now active for tuition entry."
+        : "Referral updated";
+
+      actions?.addAlert?.({ type: "success", message });
+      await Promise.all([loadReferrals(), loadDealCompanies()]);
     } catch (e: any) {
       setError(e?.message || "Failed to update referral");
     }
-  }, [apiRequest, actions, loadReferrals]);
+  }, [apiRequest, actions, loadReferrals, loadDealCompanies, referrals, dealId]);
 
   // =========================================================================
   // Effects
@@ -647,6 +685,11 @@ function ReferralBuilderCard({ context, actions }: any) {
 
       <Divider />
 
+      {/* Pipeline context banner */}
+      <Alert title="Referral stages drive the deal pipeline" variant="info">
+        Marking a referral "Selected" advances the deal to tuition entry. The Session Selection card will activate for that camp.
+      </Alert>
+
       {/* Two-Column Layout */}
       <Flex direction="row" gap="md" wrap="wrap">
         {/* LEFT: Create Form */}
@@ -710,7 +753,12 @@ function ReferralBuilderCard({ context, actions }: any) {
               label="Client Interest"
               options={interestOptions}
               value={selectedInterest}
-              onChange={(val: string) => setSelectedInterest(val)}
+              onChange={(val: string) => {
+                setSelectedInterest(val);
+                // Reset confirmation if interest changes away from Selected
+                if (val !== "Selected") setPendingSelectedConfirm(false);
+              }}
+              description={getInterestPipelineNote(selectedInterest) || undefined}
             />
 
             <TextArea
@@ -725,28 +773,69 @@ function ReferralBuilderCard({ context, actions }: any) {
             {/* Step 3: Create */}
             <Divider />
 
-            {canCreate && !copySource && (
+            {canCreate && !copySource && !pendingSelectedConfirm && (
               <Alert title="Ready to submit" variant="success">
                 Review the details above, then click Create Referral.
               </Alert>
             )}
 
-            <Button
-              variant="primary"
-              disabled={!canCreate}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await createReferral();
-                } catch (e: any) {
-                  setError(e?.message || "Create failed");
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              {busy ? "Creating..." : !selectedCompanyId ? "Select a company first" : "Create Referral"}
-            </Button>
+            {/* Confirmation dialog for "Selected" interest */}
+            {pendingSelectedConfirm && (
+              <Alert title="Confirm selection" variant="warning">
+                Marking this referral as "Selected" will advance the deal to the tuition entry stage. The Session Selection card will activate so you can set tuition. This is a significant step in the deal pipeline. Continue?
+              </Alert>
+            )}
+
+            {pendingSelectedConfirm ? (
+              <Flex direction="row" gap="sm">
+                <Button
+                  variant="primary"
+                  disabled={busy}
+                  onClick={async () => {
+                    setPendingSelectedConfirm(false);
+                    setBusy(true);
+                    try {
+                      await createReferral();
+                    } catch (e: any) {
+                      setError(e?.message || "Create failed");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  {busy ? "Creating..." : "Yes, mark Selected and advance deal"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => setPendingSelectedConfirm(false)}
+                >
+                  Cancel
+                </Button>
+              </Flex>
+            ) : (
+              <Button
+                variant="primary"
+                disabled={!canCreate}
+                onClick={async () => {
+                  // If interest is "Selected", show confirmation first
+                  if (selectedInterest === "Selected") {
+                    setPendingSelectedConfirm(true);
+                    return;
+                  }
+                  setBusy(true);
+                  try {
+                    await createReferral();
+                  } catch (e: any) {
+                    setError(e?.message || "Create failed");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {busy ? "Creating..." : !selectedCompanyId ? "Select a company first" : "Create Referral"}
+              </Button>
+            )}
           </Flex>
         </Box>
 
@@ -937,14 +1026,26 @@ function ReferralCard({
   const [localInterest, setLocalInterest] = useState(referral.clientInterest || "");
   const [localNote, setLocalNote] = useState(referral.note || "");
   const [saving, setSaving] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState(false);
 
   const hasChanges =
     localStatus !== (referral.outreachStatus || "") ||
     localInterest !== (referral.clientInterest || "") ||
     localNote !== (referral.note || "");
 
+  // Detect interest transitions
+  const isChangingToSelected = localInterest === "Selected" && referral.clientInterest !== "Selected";
+  const isChangingFromSelected = localInterest !== "Selected" && referral.clientInterest === "Selected";
+
   const handleSave = async () => {
+    // Show confirmation for transitioning TO "Selected"
+    if (isChangingToSelected && !pendingConfirm) {
+      setPendingConfirm(true);
+      return;
+    }
+
     setSaving(true);
+    setPendingConfirm(false);
     try {
       await onUpdate(referral.id, {
         referral_status: localStatus,
@@ -962,6 +1063,7 @@ function ReferralCard({
     setLocalInterest(referral.clientInterest || "");
     setLocalNote(referral.note || "");
     setExpanded(false);
+    setPendingConfirm(false);
   };
 
   const notePreview =
@@ -1027,8 +1129,26 @@ function ReferralCard({
               label="Interest"
               options={interestOptions}
               value={localInterest}
-              onChange={(val: string) => setLocalInterest(val)}
+              onChange={(val: string) => {
+                setLocalInterest(val);
+                setPendingConfirm(false);
+              }}
+              description={getInterestPipelineNote(localInterest) || undefined}
             />
+
+            {/* Confirmation for transitioning to Selected */}
+            {pendingConfirm && isChangingToSelected && (
+              <Alert title="Confirm selection" variant="warning">
+                Marking this referral "Selected" will advance the deal to tuition entry. The Session Selection card will activate for this camp. Continue?
+              </Alert>
+            )}
+
+            {/* Warning when de-selecting */}
+            {isChangingFromSelected && (
+              <Alert title="De-selecting referral" variant="warning">
+                Changing from "Selected" may reset the deal stage. If tuition has already been entered, this change will be blocked.
+              </Alert>
+            )}
 
             <TextArea
               name={`note-${referral.id}`}
@@ -1038,14 +1158,34 @@ function ReferralCard({
               rows={6}
             />
 
-            <Button
-              size="small"
-              variant="primary"
-              disabled={busy || saving || !hasChanges}
-              onClick={handleSave}
-            >
-              {saving ? "Saving..." : "Save Changes"}
-            </Button>
+            {pendingConfirm ? (
+              <Flex direction="row" gap="sm">
+                <Button
+                  size="small"
+                  variant="primary"
+                  disabled={busy || saving}
+                  onClick={handleSave}
+                >
+                  {saving ? "Saving..." : "Yes, mark Selected and advance deal"}
+                </Button>
+                <Button
+                  size="small"
+                  variant="secondary"
+                  onClick={() => setPendingConfirm(false)}
+                >
+                  Cancel
+                </Button>
+              </Flex>
+            ) : (
+              <Button
+                size="small"
+                variant="primary"
+                disabled={busy || saving || !hasChanges}
+                onClick={handleSave}
+              >
+                {saving ? "Saving..." : "Save Changes"}
+              </Button>
+            )}
           </Flex>
         )}
       </Flex>
