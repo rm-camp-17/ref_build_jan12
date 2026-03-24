@@ -19,7 +19,6 @@ import {
   Select,
   Text,
   TextArea,
-  Checkbox,
   EmptyState,
   LoadingSpinner,
   Alert,
@@ -183,8 +182,6 @@ function ReferralBuilderCard({ context, actions }: any) {
   const [selectedInterest, setSelectedInterest] = useState(DEFAULTS.CLIENT_INTEREST);
   const [note, setNote] = useState("");
 
-  // Association checkbox
-  const [associateToDeal, setAssociateToDeal] = useState(true);
 
   // Household History state
   const [householdData, setHouseholdData] = useState<HouseholdData | null>(null);
@@ -201,7 +198,6 @@ function ReferralBuilderCard({ context, actions }: any) {
   // =========================================================================
 
   const dealHasCompany = dealCompanies.length > 0;
-  const showAssociateCheckbox = !dealHasCompany && !!selectedCompanyId;
 
   const canCreate = useMemo(() => {
     return Boolean(dealId && selectedCompanyId && !busy && !submitInProgress.current);
@@ -449,7 +445,7 @@ function ReferralBuilderCard({ context, actions }: any) {
         note: note || undefined,
         outreachStatus: selectedStatus,
         clientInterest: selectedInterest,
-        associateDealToCompany: showAssociateCheckbox && associateToDeal,
+        associateDealToCompany: false,
         copiedFromDealKey: copiedFromDealKey || undefined,
         copiedFromYear: copiedFromYear ? Number(copiedFromYear) : undefined,
       };
@@ -492,8 +488,6 @@ function ReferralBuilderCard({ context, actions }: any) {
     note,
     selectedStatus,
     selectedInterest,
-    showAssociateCheckbox,
-    associateToDeal,
     copiedFromDealKey,
     copiedFromYear,
     apiRequest,
@@ -637,7 +631,6 @@ function ReferralBuilderCard({ context, actions }: any) {
             {dealCompanies.map((c) => c.name || c.id).join(", ")}
           </Tag>
         )}
-        {!dealHasCompany && <Tag variant="warning">No company linked to deal</Tag>}
       </Flex>
 
       {/* Error/Success Messages */}
@@ -702,17 +695,6 @@ function ReferralBuilderCard({ context, actions }: any) {
                   : "Search results will appear here"
               }
             />
-
-            {/* Associate checkbox */}
-            {showAssociateCheckbox && (
-              <Checkbox
-                name="associateToDeal"
-                checked={associateToDeal}
-                onChange={(checked: boolean) => setAssociateToDeal(checked)}
-              >
-                Also associate this company to the deal
-              </Checkbox>
-            )}
 
             {/* Step 2: Set Details */}
             <Select
