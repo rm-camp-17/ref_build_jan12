@@ -383,7 +383,7 @@ async function fetchSessionData(sessionId: string): Promise<{
 /**
  * Check if outreach status indicates resend is requested
  */
-function isResendRequested(outreachStatus: string | undefined): boolean {
+function isResendRequested(outreachStatus: string | null | undefined): boolean {
   if (!outreachStatus) return false;
   // Match "Resend" case-insensitively
   return outreachStatus.toLowerCase() === 'resend';
@@ -392,7 +392,7 @@ function isResendRequested(outreachStatus: string | undefined): boolean {
 /**
  * Check if client interest is "Selected"
  */
-function isClientInterestSelected(clientInterest: string | undefined): boolean {
+function isClientInterestSelected(clientInterest: string | null | undefined): boolean {
   if (!clientInterest) return false;
   return clientInterest.toLowerCase() === 'selected';
 }
