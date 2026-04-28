@@ -85,10 +85,13 @@ export const config = {
 
   // Pipeline stage configuration
   // Stage IDs from the "Deal Pipeline" (pipeline ID: "default")
+  // Note: in the active pipeline, `decisionmakerboughtin` ("Program Selected")
+  // is the closed-won terminal state — `hs_is_closed_won` is true on those deals.
+  // The historic ID `1282918770` previously stored under `closedWon` belongs to
+  // the "Historic 2015-2025" pipeline and is not used by current code.
   stages: {
     tuitionUndecided: process.env.HS_STAGE_TUITION_UNDECIDED || '1282923123',
     programSelected: process.env.HS_STAGE_PROGRAM_SELECTED || 'decisionmakerboughtin',
-    closedWon: process.env.HS_STAGE_CLOSED_WON || '1282918770',
     // Tier 1 de-selection rollback target
     recommendationPresented: process.env.HS_STAGE_RECOMMENDATION_PRESENTED || 'presentationscheduled',
   },
