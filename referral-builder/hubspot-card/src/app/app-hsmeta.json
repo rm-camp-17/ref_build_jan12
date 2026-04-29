@@ -2,7 +2,7 @@
   "uid": "camp_referral_builder_app",
   "type": "app",
   "config": {
-    "description": "Referral Builder (Deal → Company → Program → Session → Referral)",
+    "description": "Camp Experts deal lifecycle: build referrals, mark Selected, pick a session, and clone for next year.",
     "name": "Camp Referral Builder",
     "distribution": "private",
     "auth": {
