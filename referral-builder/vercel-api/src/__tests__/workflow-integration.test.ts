@@ -47,6 +47,7 @@ jest.mock('../lib/hubspot', () => {
           },
           batchApi: {
             create: jest.fn(),
+            archive: jest.fn().mockResolvedValue(undefined),
           },
         },
       },
@@ -58,11 +59,19 @@ jest.mock('../lib/hubspot', () => {
 // Mock associations module
 jest.mock('../lib/associations', () => ({
   createAssociationsBatch: jest.fn().mockResolvedValue({
-    successful: [],
+    successful: [{}],
     failed: [],
     allSucceeded: true,
   }),
   getAssociatedIds: jest.fn().mockResolvedValue([]),
+}));
+
+// Mock pg (Selected saga acquires an advisory lock via withTransaction).
+// Without this, STEP 5 fails with "EXTERNAL_DATABASE_URL is not defined".
+jest.mock('../lib/pg', () => ({
+  withTransaction: jest.fn(async (fn: any) =>
+    fn({ query: jest.fn().mockResolvedValue({ rows: [] }) })
+  ),
 }));
 
 import { hubspotClient } from '../lib/hubspot';

@@ -50,6 +50,12 @@ import {
   AssociationSpec,
   getAssociatedIds,
 } from './associations';
+import { withTransaction } from './pg';
+import {
+  logSacredFieldChange,
+  diffSacredFieldChanges,
+  SACRED_DEAL_FIELDS,
+} from './audit-log';
 
 // ============================================================================
 // Types
@@ -212,28 +218,390 @@ async function findExistingSelectedReferral(dealId: string): Promise<string | nu
  * Update deal properties for the referral-to-session integration.
  * Writes program_id, programname, and dealstage in a single PATCH call.
  *
+ * Wired into the audit-log pipeline (§5.1): if any of the five sacred
+ * fields are in the patch (they shouldn't be for the Selected
+ * transition, but we check defensively because this helper is shared),
+ * we read their before-values and emit a deal-timeline note after the
+ * write succeeds.
+ *
  * Returns true on success, error message on failure.
  */
 async function updateDealForSelection(
   dealId: string,
   companyProgramId: string,
   programName: string,
-  stageId: string
+  stageId: string,
+  ownerIdHint?: string
 ): Promise<{ success: boolean; error?: string }> {
+  const properties = {
+    [config.properties.deal.programId]: companyProgramId,
+    [config.properties.deal.programName]: programName,
+    [config.properties.deal.stage]: stageId,
+  };
   try {
-    await hubspotClient.crm.deals.basicApi.update(dealId, {
-      properties: {
-        [config.properties.deal.programId]: companyProgramId,
-        [config.properties.deal.programName]: programName,
-        [config.properties.deal.stage]: stageId,
-      },
-    });
+    // Capture before-values for audit (only if any sacred field would be
+    // touched — for the Selected transition the answer is no, but this
+    // keeps the pattern consistent if the helper grows later).
+    const before = await fetchSacredFieldsBefore(dealId, Object.keys(properties));
+    await hubspotClient.crm.deals.basicApi.update(dealId, { properties });
     console.log(`[workflow] Updated deal ${dealId}: program_id=${companyProgramId}, programname=${programName}, dealstage=${stageId}`);
+    // Best-effort audit log
+    if (before) {
+      const changes = diffSacredFieldChanges(before, properties);
+      if (changes.length > 0) {
+        await logSacredFieldChange(dealId, changes, { changedByUserId: ownerIdHint });
+      }
+    }
     return { success: true };
   } catch (error: any) {
     console.error(`[workflow] Failed to update deal ${dealId} for selection:`, error.message);
     return { success: false, error: `Failed to update deal: ${error.message}` };
   }
+}
+
+/**
+ * Fetch the current values of any sacred fields touched by a write,
+ * so the audit-log diff can compare. Returns null on error so the
+ * caller can decide whether to skip auditing (logged warning).
+ *
+ * Read-only, single GET — fast and idempotent.
+ */
+async function fetchSacredFieldsBefore(
+  dealId: string,
+  writtenProps: string[]
+): Promise<Record<string, string | null> | null> {
+  const sacredTouched = writtenProps.filter((p) => SACRED_DEAL_FIELDS.includes(p));
+  if (sacredTouched.length === 0) return {}; // empty record = nothing to diff
+  try {
+    const deal = await hubspotClient.crm.deals.basicApi.getById(dealId, sacredTouched);
+    const out: Record<string, string | null> = {};
+    for (const p of sacredTouched) {
+      out[p] = (deal.properties as any)[p] ?? null;
+    }
+    return out;
+  } catch (err: any) {
+    console.warn(
+      `[workflow] Could not fetch sacred-field before-state for deal ${dealId}:`,
+      err.message
+    );
+    return null;
+  }
+}
+
+/**
+ * Delete the Referral ↔ Company "Selected_Referral" association as
+ * part of a saga compensation. Best-effort: if the delete fails (e.g.
+ * because the association was never actually created in STEP 2) we
+ * log and continue — the goal of compensation is "leave HubSpot in a
+ * clean state if at all possible," not block on a 404.
+ */
+async function deleteSelectedReferralAssociation(
+  referralId: string,
+  companyId: string
+): Promise<void> {
+  try {
+    // Use v4 batch archive to remove all labeled associations between
+    // referral and company. HubSpot collapses unlabeled and labeled
+    // associations into a single object pair, so removing here removes
+    // any selected_referral label.
+    await (hubspotClient.crm.associations.v4 as any).batchApi.archive(
+      config.objectTypes.referral,
+      'companies',
+      {
+        inputs: [
+          {
+            _from: { id: referralId },
+            to: [{ id: companyId }],
+          },
+        ],
+      }
+    );
+    console.log(
+      `[workflow] Compensation: deleted Selected_Referral association referral:${referralId} → company:${companyId}`
+    );
+  } catch (err: any) {
+    console.warn(
+      `[workflow] Compensation: failed to delete Selected_Referral association (continuing):`,
+      err?.message ?? err
+    );
+  }
+}
+
+/**
+ * Revert a referral's client_interest to its previous value as part of
+ * a saga compensation.
+ */
+async function revertReferralInterest(
+  referralId: string,
+  previousInterest: string | undefined
+): Promise<void> {
+  // If the previous value was empty/unknown, write the empty string —
+  // HubSpot accepts that as "clear the property."
+  const value = previousInterest ?? '';
+  try {
+    await hubspotClient.crm.objects.basicApi.update(
+      config.objectTypes.referral,
+      referralId,
+      { properties: { [config.properties.referral.interest]: value } }
+    );
+    console.log(
+      `[workflow] Compensation: reverted referral ${referralId} client_interest → "${value}"`
+    );
+  } catch (err: any) {
+    console.warn(
+      `[workflow] Compensation: failed to revert referral ${referralId} interest (manual cleanup may be needed):`,
+      err?.message ?? err
+    );
+  }
+}
+
+/**
+ * Build the saga's idempotency key. Stable for a given
+ * (referralId, dealId, target_state) tuple — client retries with the
+ * same parameters reuse the same lock and (eventually) the same audit
+ * trail. See spec §4.2: "Each step uses an idempotency key derived
+ * from (referralId, dealId, target_state_hash)".
+ *
+ * `target_state` is hard-coded to "selected" because today the saga
+ * only handles the Selected transition; if other transitions adopt the
+ * saga later, plumb the target through.
+ */
+function buildSelectedSagaIdempotencyKey(
+  referralId: string,
+  dealId: string
+): string {
+  return `selected-saga:${referralId}:${dealId}:selected`;
+}
+
+/**
+ * Compensating-write helper. Runs the appropriate set of rollback
+ * actions for whichever step failed. Each action is best-effort so a
+ * compensation cascade always tries to reach a clean state even if one
+ * step's revert fails.
+ *
+ * `completedThrough` indicates the highest step that completed
+ * successfully. We compensate any step with `step <= completedThrough`.
+ */
+async function compensateSelectedTransition(args: {
+  referralId: string;
+  dealId: string;
+  companyId: string;
+  previousInterest: string | undefined;
+  completedThrough: 0 | 1 | 2 | 3 | 4;
+}): Promise<void> {
+  const { referralId, dealId, companyId, previousInterest, completedThrough } = args;
+  console.warn(
+    `[workflow] Compensating Selected saga for referral ${referralId} (completed through step ${completedThrough})`
+  );
+
+  // STEP 4 was the deal patch. If completedThrough === 4 the patch
+  // succeeded but STEP 5 detected a race; roll the deal back to the
+  // most conservative safe state (clear program_id/programname, reset
+  // dealstage to recommendationPresented). Same end state as a Tier-1
+  // de-selection.
+  if (completedThrough >= 4) {
+    try {
+      await hubspotClient.crm.deals.basicApi.update(dealId, {
+        properties: {
+          [config.properties.deal.programId]: '',
+          [config.properties.deal.programName]: '',
+          [config.properties.deal.stage]: config.stages.recommendationPresented,
+        },
+      });
+      console.log(`[workflow] Compensation: reverted deal ${dealId} to recommendationPresented`);
+    } catch (err: any) {
+      console.warn(
+        `[workflow] Compensation: failed to revert deal ${dealId} (manual cleanup may be needed):`,
+        err?.message ?? err
+      );
+    }
+  }
+
+  // STEP 2: undo the Selected_Referral association
+  if (completedThrough >= 2) {
+    await deleteSelectedReferralAssociation(referralId, companyId);
+  }
+
+  // STEP 1: revert client_interest
+  if (completedThrough >= 1) {
+    await revertReferralInterest(referralId, previousInterest);
+  }
+}
+
+/**
+ * Run the 5-step Selected-transition saga (spec §4.2).
+ *
+ * The caller has already passed all pre-flight checks (validation,
+ * "no other Selected referral on this deal", company programid
+ * exists). This function is the atomic-with-compensation core.
+ *
+ * STEP 1: write referral.client_interest = "Selected"
+ * STEP 2: create Referral ↔ Company "Selected_Referral" association
+ * STEP 3: read Company.programid + Company.name (no writes)
+ * STEP 4: PATCH deal { program_id, programname, dealstage }
+ * STEP 5: under Postgres advisory lock, re-check no OTHER referral on
+ *         this deal is Selected. If a concurrent rep got there first,
+ *         compensate everything.
+ *
+ * On any failure, runs the appropriate compensating writes and returns
+ * `{ success: false, error }`. On success, returns `{ success: true }`.
+ *
+ * The advisory-lock approach (`pg_advisory_xact_lock(hashtext(key))`)
+ * matches `clone-ledger.ts`'s pattern. The lock is keyed on dealId so
+ * two reps trying to Select different referrals on the SAME deal
+ * serialize; reps on different deals proceed in parallel.
+ */
+async function runSelectedTransitionSaga(args: {
+  referralId: string;
+  dealId: string;
+  companyId: string;
+  previousInterest: string | undefined;
+  /** May be true for create-flow (referral was just created with interest=Selected). */
+  skipStep1?: boolean;
+  /** Pre-fetched company programid (passed in if caller already had it). */
+  companyProgramId: string;
+  /** Display name for deal.programname. */
+  programName: string;
+  /** For idempotency-key logging only. */
+  ownerIdHint?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  const {
+    referralId,
+    dealId,
+    companyId,
+    previousInterest,
+    skipStep1,
+    companyProgramId,
+    programName,
+    ownerIdHint,
+  } = args;
+
+  const idempotencyKey = buildSelectedSagaIdempotencyKey(referralId, dealId);
+  console.log(`[workflow] Selected saga starting (idempotency-key: ${idempotencyKey})`);
+
+  // Track how far we've progressed for the compensation handler.
+  let completedThrough: 0 | 1 | 2 | 3 | 4 = 0;
+
+  // STEP 1: referral.client_interest = "Selected"
+  // (skipStep1 = true when create-flow already wrote it as part of the
+  // referral-create payload.)
+  if (!skipStep1) {
+    try {
+      await hubspotClient.crm.objects.basicApi.update(
+        config.objectTypes.referral,
+        referralId,
+        {
+          properties: {
+            [config.properties.referral.interest]: 'Selected',
+          },
+        }
+      );
+    } catch (err: any) {
+      console.error(`[workflow] Saga STEP 1 failed:`, err?.message ?? err);
+      // Nothing to compensate — STEP 1 was the first write.
+      return { success: false, error: `STEP 1 failed: ${err?.message ?? err}` };
+    }
+  }
+  completedThrough = 1;
+
+  // STEP 2: create Referral ↔ Company "Selected_Referral" association.
+  try {
+    const result = await createAssociationsBatch([
+      {
+        fromId: referralId,
+        fromType: config.objectTypes.referral,
+        toId: companyId,
+        toType: 'companies',
+        label: 'Selected_Referral',
+      },
+    ]);
+    if (!result.allSucceeded) {
+      const msg = result.failed[0]?.error ?? 'unknown association error';
+      throw new Error(msg);
+    }
+  } catch (err: any) {
+    console.error(`[workflow] Saga STEP 2 failed:`, err?.message ?? err);
+    await compensateSelectedTransition({
+      referralId,
+      dealId,
+      companyId,
+      previousInterest,
+      completedThrough,
+    });
+    return { success: false, error: `STEP 2 failed: ${err?.message ?? err}` };
+  }
+  completedThrough = 2;
+
+  // STEP 3: read Company.programid + Company.name. The caller already
+  // fetched these (companyProgramId, programName); we trust the
+  // pre-fetched values. Mark step done if both are present.
+  if (!companyProgramId || !programName) {
+    console.error(`[workflow] Saga STEP 3 failed: missing programid or programName`);
+    await compensateSelectedTransition({
+      referralId,
+      dealId,
+      companyId,
+      previousInterest,
+      completedThrough,
+    });
+    return {
+      success: false,
+      error: 'STEP 3 failed: missing program_id or program name',
+    };
+  }
+  completedThrough = 3;
+
+  // STEP 4: PATCH the deal.
+  const dealUpdateResult = await updateDealForSelection(
+    dealId,
+    companyProgramId,
+    programName,
+    config.stages.tuitionUndecided,
+    ownerIdHint
+  );
+  if (!dealUpdateResult.success) {
+    console.error(`[workflow] Saga STEP 4 failed:`, dealUpdateResult.error);
+    await compensateSelectedTransition({
+      referralId,
+      dealId,
+      companyId,
+      previousInterest,
+      completedThrough,
+    });
+    return { success: false, error: `STEP 4 failed: ${dealUpdateResult.error}` };
+  }
+  completedThrough = 4;
+
+  // STEP 5: under advisory lock, verify no other Selected referral on
+  // this deal. The lock holds for the duration of the transaction —
+  // concurrent saga instances on the same dealId queue here.
+  try {
+    await withTransaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `deal-selected:${dealId}`,
+      ]);
+      const otherSelectedId = await findExistingSelectedReferral(dealId);
+      if (otherSelectedId && otherSelectedId !== referralId) {
+        // Another rep raced us. Throw to trigger compensation in the
+        // catch below. We carry the offending id in the message for
+        // debugging.
+        throw new Error(`STEP 5 race: referral ${otherSelectedId} is also Selected`);
+      }
+    });
+  } catch (err: any) {
+    console.error(`[workflow] Saga STEP 5 failed:`, err?.message ?? err);
+    await compensateSelectedTransition({
+      referralId,
+      dealId,
+      companyId,
+      previousInterest,
+      completedThrough,
+    });
+    return { success: false, error: `${err?.message ?? err}` };
+  }
+
+  console.log(`[workflow] Selected saga completed for referral ${referralId} on deal ${dealId}`);
+  return { success: true };
 }
 
 /**
@@ -692,8 +1060,12 @@ export async function createReferralWorkflow(
     (spec) => spec.fromType === 'deals' && spec.toType === 'companies'
   );
 
-  // Step 6: If marking as Selected, update deal properties to activate Session Card
-  // Writes: program_id, programname, dealstage → "Program Selected - Tuition Undecided"
+  // Step 6: If marking as Selected, run the 5-step Selected-transition
+  // saga (spec §4.2). The referral was created above with
+  // client_interest already set (STEP 1 effectively done as part of
+  // the create payload), so we pass `skipStep1: true`. The saga still
+  // creates the Selected_Referral association, runs the deal PATCH,
+  // and acquires the advisory lock for the concurrent-rep race check.
   let dealUpdated = false;
   if (isSelected && companyProgramId) {
     // Use the Company name as deal.programname. Earlier code fetched a
@@ -702,20 +1074,24 @@ export async function createReferralWorkflow(
     // canonical display name.
     const programName = companyName || 'Unknown Program';
 
-    const dealUpdateResult = await updateDealForSelection(
-      input.dealId,
+    const sagaResult = await runSelectedTransitionSaga({
+      referralId,
+      dealId: input.dealId,
+      companyId: input.companyId,
+      // For create-flow there's no "previous" client_interest to revert
+      // to (the referral didn't exist a moment ago). On compensation we
+      // clear the field — the referral itself remains so the rep can
+      // see what was attempted.
+      previousInterest: undefined,
+      skipStep1: true,
       companyProgramId,
       programName,
-      config.stages.tuitionUndecided
-    );
+      ownerIdHint: dealData.ownerId,
+    });
 
-    if (!dealUpdateResult.success) {
-      // Deal update failed — do NOT mark referral as Selected
-      // The referral was already created/updated above, but without the deal
-      // transition the Session Card won't activate. Return error so the
-      // frontend can show it and the user can retry.
-      errors.push(dealUpdateResult.error || 'Failed to update deal for session selection');
-      console.error(`[workflow] Deal update failed for selection. Referral ${referralId} was created but deal not transitioned.`);
+    if (!sagaResult.success) {
+      errors.push(sagaResult.error || 'Failed to update deal for session selection');
+      console.error(`[workflow] Selected saga failed for referral ${referralId}: ${sagaResult.error}`);
       return {
         success: false,
         referralId,
@@ -797,9 +1173,13 @@ export async function updateReferralWorkflow(
   const isNowSelected = isClientInterestSelected(newInterest);
   const wasSelected = isClientInterestSelected(context?.previousClientInterest);
 
-  // Handle transition TO "Selected"
+  // Handle transition TO "Selected" — runs the 5-step saga from spec §4.2
   if (isNowSelected && !wasSelected && context?.dealId && context?.companyId) {
-    // Check for existing Selected referral (not this one)
+    // Pre-flight: check for existing Selected referral (not this one).
+    // The saga's STEP 5 also re-checks under an advisory lock, but
+    // failing fast here saves a referral write + association write +
+    // deal patch + compensation cascade for the common case where the
+    // duplicate is already visible in HubSpot's index.
     const existingSelectedId = await findExistingSelectedReferral(context.dealId);
     if (existingSelectedId && existingSelectedId !== referralId) {
       return {
@@ -810,7 +1190,7 @@ export async function updateReferralWorkflow(
       };
     }
 
-    // Validate Company programid
+    // Pre-flight: validate Company programid (mandatory for Selected).
     const companyProgramId = await fetchCompanyProgramId(context.companyId);
     if (!companyProgramId) {
       return {
@@ -826,30 +1206,42 @@ export async function updateReferralWorkflow(
     // canonical display name).
     const programName = (await fetchCompanyName(context.companyId)) || 'Unknown Program';
 
-    // Update the referral first
-    try {
-      await hubspotClient.crm.objects.basicApi.update(
-        config.objectTypes.referral,
-        referralId,
-        { properties }
-      );
-    } catch (error: any) {
-      console.error(`[workflow] Failed to update referral ${referralId}:`, error.message);
-      return { success: false, errors: [`Failed to update referral: ${error.message}`] };
+    // First write any non-interest properties the caller asked for
+    // (note, status). The interest flip is owned by the saga's STEP 1.
+    const nonInterestProps = { ...properties };
+    delete nonInterestProps[config.properties.referral.interest];
+    if (Object.keys(nonInterestProps).length > 0) {
+      try {
+        await hubspotClient.crm.objects.basicApi.update(
+          config.objectTypes.referral,
+          referralId,
+          { properties: nonInterestProps }
+        );
+      } catch (error: any) {
+        console.error(`[workflow] Failed to update referral ${referralId} (pre-saga):`, error.message);
+        return {
+          success: false,
+          errors: [`Failed to update referral: ${error.message}`],
+        };
+      }
     }
 
-    // Then update the deal
-    const dealUpdateResult = await updateDealForSelection(
-      context.dealId,
+    // Run the saga. STEP 1 writes client_interest = "Selected"; on
+    // failure it compensates by reverting to previousClientInterest.
+    const sagaResult = await runSelectedTransitionSaga({
+      referralId,
+      dealId: context.dealId,
+      companyId: context.companyId,
+      previousInterest: context.previousClientInterest,
+      skipStep1: false,
       companyProgramId,
       programName,
-      config.stages.tuitionUndecided
-    );
+    });
 
-    if (!dealUpdateResult.success) {
+    if (!sagaResult.success) {
       return {
         success: false,
-        errors: [dealUpdateResult.error || 'Failed to update deal for session selection'],
+        errors: [sagaResult.error || 'Failed to update deal for session selection'],
       };
     }
 
