@@ -36,6 +36,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDeal } from '@/lib/deals';
+import { getAssociatedIds } from '@/lib/associations';
 
 export async function GET(
   _req: NextRequest,
@@ -59,7 +60,13 @@ export async function GET(
       );
     }
 
+    // Parent-contact count drives SetupView's checklist. Done server-side
+    // because hubspot.fetch from the iframe can't authenticate to HubSpot's
+    // own API — it stamps a JWT meant for our backend, not for hubapi.com.
+    const contactIds = await getAssociatedIds('deals', dealId, 'contacts');
+
     return NextResponse.json({
+      parent_contact_count: contactIds.length,
       id: deal.id,
       dealname: deal.dealname,
       year1: deal.year1,
