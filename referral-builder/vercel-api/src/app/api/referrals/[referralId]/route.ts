@@ -23,6 +23,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { updateReferralWorkflow } from '@/lib/workflow';
 import { validateUpdateReferralInput } from '@/lib/validation';
+import {
+  requireUnlocked,
+  RequireUnlockedError,
+} from '@/lib/require-unlocked';
+import {
+  requireDealAuthorization,
+  DealAuthorizationError,
+} from '@/lib/require-deal-authorization';
 
 type Params = { referralId: string };
 
@@ -40,15 +48,46 @@ export async function PATCH(
     );
   }
 
-  // Parse request body
+  // Read raw body once for HMAC verification + JSON parsing.
+  let rawBody = '';
   let body: any;
   try {
-    body = await req.json();
+    rawBody = await req.text();
+    body = rawBody ? JSON.parse(rawBody) : {};
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: 'Invalid JSON in request body' },
       { status: 400 }
     );
+  }
+
+  // Authorization + commission_locked enforcement (spec §5.1, §6.1).
+  //
+  // PATCH /api/referrals/:id is a referral mutation, not a deal mutation
+  // — none of the deal's sacred fields are touched directly. We still
+  // run the auth check (using context.dealId when present, or the
+  // referralId as a fallback log key) and pass [] to requireUnlocked
+  // so it short-circuits without a network call.
+  //
+  // NOTE: the Selected-transition saga (workflow.ts) writes deal-side
+  // properties indirectly. None of those (program_id, programname,
+  // dealstage) are sacred per Rule 2, so this remains correct. If that
+  // ever changes, switch to passing the touched deal field names here.
+  const dealIdForAuth =
+    (body?.context && typeof body.context.dealId === 'string'
+      ? body.context.dealId
+      : '') || referralId;
+  try {
+    await requireDealAuthorization(req, dealIdForAuth, rawBody);
+    await requireUnlocked(dealIdForAuth, []);
+  } catch (err) {
+    if (err instanceof DealAuthorizationError) {
+      return NextResponse.json(err.body, { status: err.statusCode });
+    }
+    if (err instanceof RequireUnlockedError) {
+      return NextResponse.json(err.body, { status: err.statusCode });
+    }
+    throw err;
   }
 
   // Validate input (validates properties, not context)
