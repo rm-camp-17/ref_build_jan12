@@ -7,17 +7,15 @@
  * 3. Build canonical payload with defaults + computed fields
  * 4. Search for existing referral (upsert logic)
  * 5. Create or update referral (with retry for read-only properties)
- * 6. Create all associations (idempotent)
- *    - Referral ↔ Deal
- *    - Referral ↔ Company (with "Recommendation" or "Selected_Referral" label)
- *    - Deal ↔ Company (always created when referral is created)
- *    - Referral ↔ Program (optional)
- *    - Referral ↔ Sessions (optional, supports multiple)
+ * 6. Create all associations (idempotent), pinned to numeric HubSpot type IDs
+ *    (see CUSTOM_OBJECT_SCHEMAS.md "Cross-object association map"):
+ *    - Referral → Deal: `deal_to_referrals` (typeId 137) — always
+ *    - Referral → Deal: `selected_referral` (typeId 152) — only when Selected
+ *    - Referral → Company: `company_to_referrals` (typeId 139) — always
+ *    - Deal ↔ Company (default unlabeled) — always
+ *    Program / Session associations are not created — those object types
+ *    do not exist in this portal.
  * 7. Return structured result
- *
- * Association Labels:
- * - "Recommendation": Default label for Referral ↔ Company associations
- * - "Selected_Referral": Label for Referral ↔ Company when client_interest == "Selected"
  *
  * Computed fields set by this workflow:
  * - hubspot_owner_id: from Deal.hubspot_owner_id
@@ -536,74 +534,53 @@ function buildAssociationSpecs(
 ): AssociationSpec[] {
   const specs: AssociationSpec[] = [];
 
-  // Always: Referral ↔ Deal
+  // Always: Referral → Deal via `deal_to_referrals` (typeId 137)
+  // This is the default edge used to enumerate all referrals on a deal.
   specs.push({
     fromId: referralId,
     fromType: config.objectTypes.referral,
     toId: input.dealId,
     toType: 'deals',
+    typeId: 137,
+    category: 'USER_DEFINED',
   });
 
-  // Always: Referral ↔ Company with appropriate label
-  // Use "Selected_Referral" label when client_interest is "Selected", otherwise "Recommendation"
-  const companyLabel = isClientInterestSelected(input.clientInterest)
-    ? 'Selected_Referral'
-    : 'Recommendation';
+  // Conditionally: Referral → Deal via `selected_referral` (typeId 152)
+  // Marks WHICH referral the family chose. Created in addition to the
+  // default `deal_to_referrals` edge above when client_interest = Selected.
+  // The session card reads this label to determine which referral to surface.
+  if (isClientInterestSelected(input.clientInterest)) {
+    specs.push({
+      fromId: referralId,
+      fromType: config.objectTypes.referral,
+      toId: input.dealId,
+      toType: 'deals',
+      typeId: 152,
+      category: 'USER_DEFINED',
+    });
+  }
 
+  // Always: Referral → Company via `company_to_referrals` (typeId 139)
+  // Default edge linking the referral to the camp it points at.
+  // (HubSpot also defines a separate `referred` label/typeId 155 with
+  // different semantics; we don't use it here.)
   specs.push({
     fromId: referralId,
     fromType: config.objectTypes.referral,
     toId: input.companyId,
     toType: 'companies',
-    label: companyLabel,
+    typeId: 139,
+    category: 'USER_DEFINED',
   });
 
-  // Always: Deal ↔ Company (idempotent - won't create duplicates)
-  // Every referral should link its deal to its company
+  // Always: Deal ↔ Company (default unlabeled HubSpot association)
+  // Every referral should link its deal to its company. Idempotent.
   specs.push({
     fromId: input.dealId,
     fromType: 'deals',
     toId: input.companyId,
     toType: 'companies',
   });
-
-  // Optional: Referral ↔ Program
-  if (input.programId) {
-    specs.push({
-      fromId: referralId,
-      fromType: config.objectTypes.referral,
-      toId: input.programId,
-      toType: config.objectTypes.program,
-    });
-  }
-
-  // Collect all session IDs to associate
-  const allSessionIds = new Set<string>();
-
-  // Add sessions from sessionIds array
-  if (input.sessionIds && input.sessionIds.length > 0) {
-    for (const sid of input.sessionIds) {
-      allSessionIds.add(sid);
-    }
-  }
-
-  // Add single sessionId for backwards compatibility
-  if (input.sessionId) {
-    allSessionIds.add(input.sessionId);
-  }
-
-  // Create associations for all sessions
-  // Use "Selected_Referral" label when client_interest is "Selected"
-  const isSelected = isClientInterestSelected(input.clientInterest);
-  for (const sessionId of allSessionIds) {
-    specs.push({
-      fromId: referralId,
-      fromType: config.objectTypes.referral,
-      toId: sessionId,
-      toType: config.objectTypes.session,
-      label: isSelected ? 'Selected_Referral' : undefined,
-    });
-  }
 
   return specs;
 }
