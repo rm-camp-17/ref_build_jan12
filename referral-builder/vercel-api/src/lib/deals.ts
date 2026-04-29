@@ -9,6 +9,40 @@
  */
 
 import { hubspotClient } from './hubspot';
+import {
+  logSacredFieldChange,
+  diffSacredFieldChanges,
+  isSacredField,
+} from './audit-log';
+import { getOwnerByEmail } from './owners';
+
+// ============================================================================
+// Errors
+// ============================================================================
+
+/**
+ * Thrown by `updateDeal` when `deal_split_email` is set to an email
+ * that does not resolve to a HubSpot Owner. Spec §6.2 requires this
+ * server-side check before any HubSpot write — a typo'd email would
+ * otherwise route co-work commission to nobody.
+ *
+ * Routes should map this to HTTP 422 with the documented error shape:
+ *   { success: false, message, field: "deal_split_email" }
+ */
+export class DealSplitEmailNotFoundError extends Error {
+  readonly field = 'deal_split_email' as const;
+  readonly code = 'DEAL_SPLIT_EMAIL_NOT_FOUND' as const;
+  readonly httpStatus = 422 as const;
+  readonly userMessage =
+    'Co-work email does not match any HubSpot expert. Check the spelling.';
+  constructor(public readonly email: string) {
+    super(
+      `deal_split_email "${email}" does not match any HubSpot owner. ` +
+        `Spec §6.2: server-side validation rejects unknown experts before write.`
+    );
+    this.name = 'DealSplitEmailNotFoundError';
+  }
+}
 
 // ============================================================================
 // Property sets
@@ -123,16 +157,86 @@ export async function getDeal(dealId: string): Promise<DealRecord | null> {
  * fields (Rule 1 — those belong to ce-billing's push sync). This helper
  * does NOT enforce that — too easy to miss in code review. The
  * `requireUnlocked` middleware planned in Phase 3f will validate.
+ *
+ * Sacred-field audit log (spec §5.1): if the patch touches any of the
+ * five sacred fields, we read their before-values, write the patch,
+ * then emit a deal-timeline note diffing before vs after. The audit
+ * write is best-effort — failures are logged but do NOT roll back the
+ * underlying property write.
+ *
+ * Server-side validation (spec §6.2): if the patch sets
+ * `deal_split_email` to a non-empty value, we resolve the email to a
+ * HubSpot Owner BEFORE the deal write. If no owner matches, throws
+ * `DealSplitEmailNotFoundError` (HTTP 422) without any HubSpot write.
  */
 export async function updateDeal(
   dealId: string,
-  properties: Record<string, string>
+  properties: Record<string, string>,
+  options: { changedByUserId?: string } = {}
 ): Promise<void> {
+  // Server-side validation (spec §6.2): if the patch sets
+  // `deal_split_email` to a non-empty value, confirm it resolves to a
+  // HubSpot Owner before doing anything else. Empty / unset values are
+  // allowed (clearing the split is fine).
+  const proposedSplitEmail = properties['deal_split_email'];
+  if (proposedSplitEmail && proposedSplitEmail.trim() !== '') {
+    const owner = await getOwnerByEmail(proposedSplitEmail);
+    if (!owner) {
+      throw new DealSplitEmailNotFoundError(proposedSplitEmail);
+    }
+  }
+
+  // Capture before-values for any sacred fields in the patch.
+  const sacredTouched = Object.keys(properties).filter(isSacredField);
+  let before: Record<string, string | null> | null = null;
+  if (sacredTouched.length > 0) {
+    before = await fetchSacredFieldsForAudit(dealId, sacredTouched);
+  }
+
   try {
     await hubspotClient.crm.deals.basicApi.update(dealId, { properties });
   } catch (err: any) {
     console.error(`[deals] Failed to update deal ${dealId}:`, err.message);
     throw err;
+  }
+
+  // Diff & audit. If the read-before failed, skip — we can't compute a
+  // reliable diff and a half-empty audit note is worse than none.
+  if (before) {
+    const changes = diffSacredFieldChanges(before, properties);
+    if (changes.length > 0) {
+      await logSacredFieldChange(dealId, changes, {
+        changedByUserId: options.changedByUserId,
+      });
+    }
+  }
+}
+
+/**
+ * Read just the sacred-field properties for audit-log diffing.
+ * Returns null on error (caller falls back to skipping the audit note
+ * rather than emitting a misleading one).
+ */
+async function fetchSacredFieldsForAudit(
+  dealId: string,
+  sacredFields: string[]
+): Promise<Record<string, string | null> | null> {
+  try {
+    const deal = await hubspotClient.crm.deals.basicApi.getById(
+      dealId,
+      sacredFields
+    );
+    const out: Record<string, string | null> = {};
+    for (const f of sacredFields) {
+      out[f] = (deal.properties as any)[f] ?? null;
+    }
+    return out;
+  } catch (err: any) {
+    console.warn(
+      `[deals] Could not read sacred fields for audit (deal ${dealId}):`,
+      err.message
+    );
+    return null;
   }
 }
 
