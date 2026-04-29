@@ -33,9 +33,22 @@ export const config = {
       key: process.env.HS_REFERRAL_KEY_PROP || 'referral_key',
       // Display name
       name: process.env.HS_REFERRAL_NAME_PROP || 'referral_name',
-      // Status dropdown (enum) - property name: referral_status, label: referral_outreach_status
+      //
+      // Outreach status enum — see PROPERTY_NAME_AUDIT.md.
+      // Canonical (enum dropdown):  `referral_status`             (label: "referral_outreach_status")
+      // Legacy   (string text):     `referral_outreach_status`    (label: "Referral Outreach Status")
+      // Earlier code wrote to the legacy STRING field by mistake. We now
+      // dual-write both during the migration window. Reads prefer canonical.
+      outreachCanonical: process.env.HS_REFERRAL_OUTREACH_CANONICAL_PROP || 'referral_status',
       outreach: process.env.HS_REFERRAL_OUTREACH_PROP || 'referral_outreach_status',
-      // Interest dropdown (enum) - property name: client_interest, label: referral_client_interest
+      //
+      // Client interest enum — see PROPERTY_NAME_AUDIT.md.
+      // Canonical (enum dropdown):  `client_interest`            (label: "referral_client_interest")
+      // Legacy   (LABEL-AS-NAME):   `referral_client_interest`   (NOT a real property)
+      // The legacy name was the property's label, not its internal name.
+      // HubSpot may or may not coerce label → name on write. Dual-writing
+      // is harmless either way: writes to a non-existent name are dropped.
+      interestCanonical: process.env.HS_REFERRAL_INTEREST_CANONICAL_PROP || 'client_interest',
       interest: process.env.HS_REFERRAL_INTEREST_PROP || 'referral_client_interest',
       // Note to company
       note: process.env.HS_REFERRAL_NOTE_PROP || 'referral_note_to_company',
