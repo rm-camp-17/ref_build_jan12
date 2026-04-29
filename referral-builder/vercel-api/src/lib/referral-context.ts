@@ -18,6 +18,7 @@
 import { hubspotClient } from './hubspot';
 import { config } from './config';
 import { getAssociatedIds } from './associations';
+import { pickReferralProperty } from './property-aliases';
 
 export interface ReferralContext {
   campName: string | null;
@@ -42,12 +43,15 @@ export async function fetchReferralContext(
       return null;
     }
 
-    // Batch-read client_interest + company_name for all this deal's referrals.
+    // Batch-read interest (canonical + legacy) + company_name for all this
+    // deal's referrals. We fetch both names so we don't miss records that
+    // only have data on the legacy side during the migration window.
     const batch = await hubspotClient.crm.objects.batchApi.read(
       config.objectTypes.referral,
       {
         inputs: referralIds.map((id) => ({ id })),
         properties: [
+          config.properties.referral.interestCanonical,
           config.properties.referral.interest,
           config.properties.referral.companyName,
         ],
@@ -56,7 +60,7 @@ export async function fetchReferralContext(
     );
 
     for (const result of batch.results) {
-      const interest = result.properties[config.properties.referral.interest];
+      const interest = pickReferralProperty(result.properties, 'interest');
       if (interest && interest.toLowerCase() === 'selected') {
         const campName =
           result.properties[config.properties.referral.companyName] ?? null;

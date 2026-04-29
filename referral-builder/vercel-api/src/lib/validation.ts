@@ -4,6 +4,7 @@
  */
 
 import { config } from './config';
+import { dualWriteReferralProperty } from './property-aliases';
 
 // ============================================================================
 // Types
@@ -138,16 +139,17 @@ export function validateCreateReferralInput(
 export function buildReferralPayload(input: CreateReferralInput): ReferralPayload {
   const referralKey = `${input.dealId}-${input.companyId}`;
 
-  // Build properties using config property names
+  // Build properties using config property names. Status + interest are
+  // dual-written to canonical + legacy names — see PROPERTY_NAME_AUDIT.md.
   const properties: Record<string, string> = {
     // Key for upsert lookup
     [config.properties.referral.key]: referralKey,
     // Display name
     [config.properties.referral.name]: `Referral for Deal ${input.dealId}`,
-    // Status with default
-    [config.properties.referral.outreach]: input.outreachStatus || DEFAULTS.REFERRAL_STATUS,
-    // Interest with default
-    [config.properties.referral.interest]: input.clientInterest || DEFAULTS.CLIENT_INTEREST,
+    // Status (dual-write)
+    ...dualWriteReferralProperty('outreach', input.outreachStatus || DEFAULTS.REFERRAL_STATUS),
+    // Interest (dual-write)
+    ...dualWriteReferralProperty('interest', input.clientInterest || DEFAULTS.CLIENT_INTEREST),
     // Note (empty string if not provided)
     [config.properties.referral.note]: input.note || '',
   };
@@ -187,19 +189,29 @@ export function validateUpdateReferralInput(
   const props = data.properties as Record<string, unknown>;
   const cleanedProps: Record<string, string> = {};
 
-  // Validate each property if provided
-  const statusProp = config.properties.referral.outreach;
-  const interestProp = config.properties.referral.interest;
+  // Validate each property if provided. Status + interest accept either the
+  // canonical or legacy name from the client — we expand to dual-write below.
+  const statusCanonical = config.properties.referral.outreachCanonical;
+  const statusLegacy = config.properties.referral.outreach;
+  const interestCanonical = config.properties.referral.interestCanonical;
+  const interestLegacy = config.properties.referral.interest;
   const noteProp = config.properties.referral.note;
 
-  // Accept any string values for enum properties
-  // HubSpot will validate against its configured options
-  if (props[statusProp] !== undefined) {
-    cleanedProps[statusProp] = String(props[statusProp]);
+  // Accept either name on the wire, expand to both names on disk.
+  const incomingStatus =
+    props[statusCanonical] !== undefined
+      ? props[statusCanonical]
+      : props[statusLegacy];
+  if (incomingStatus !== undefined) {
+    Object.assign(cleanedProps, dualWriteReferralProperty('outreach', String(incomingStatus)));
   }
 
-  if (props[interestProp] !== undefined) {
-    cleanedProps[interestProp] = String(props[interestProp]);
+  const incomingInterest =
+    props[interestCanonical] !== undefined
+      ? props[interestCanonical]
+      : props[interestLegacy];
+  if (incomingInterest !== undefined) {
+    Object.assign(cleanedProps, dualWriteReferralProperty('interest', String(incomingInterest)));
   }
 
   if (props[noteProp] !== undefined) {

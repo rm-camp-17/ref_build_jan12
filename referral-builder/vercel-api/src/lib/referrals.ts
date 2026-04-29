@@ -8,6 +8,7 @@
 import { hubspotClient } from '@/lib/hubspot';
 import { config } from '@/lib/config';
 import { getAssociatedIds } from '@/lib/associations';
+import { pickReferralProperty } from '@/lib/property-aliases';
 
 export interface ReferralData {
   id: string;
@@ -36,10 +37,14 @@ export async function fetchReferralsForDeal(dealId: string): Promise<ReferralDat
   const referralResults = await Promise.all(
     referralIds.map(async (referralId: string) => {
       try {
-        // Fetch referral with properties (try with send date, fall back without)
+        // Fetch referral with properties. We dual-read outreach + interest
+        // under both the canonical and legacy names — see PROPERTY_NAME_AUDIT.md.
+        // Try with send date, fall back without.
         const baseProps = [
           config.properties.referral.key,
+          config.properties.referral.outreachCanonical,
           config.properties.referral.outreach,
+          config.properties.referral.interestCanonical,
           config.properties.referral.interest,
           config.properties.referral.note,
         ];
@@ -86,8 +91,8 @@ export async function fetchReferralsForDeal(dealId: string): Promise<ReferralDat
         return {
           id: referral.id,
           referralKey: referral.properties[config.properties.referral.key],
-          outreachStatus: referral.properties[config.properties.referral.outreach],
-          clientInterest: referral.properties[config.properties.referral.interest],
+          outreachStatus: pickReferralProperty(referral.properties, 'outreach'),
+          clientInterest: pickReferralProperty(referral.properties, 'interest'),
           note: referral.properties[config.properties.referral.note] || '',
           createdAt: referral.properties[config.properties.referral.emailLastSentDatetime] || null,
           company: companyData,
