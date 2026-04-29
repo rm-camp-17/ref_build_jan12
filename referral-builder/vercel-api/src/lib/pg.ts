@@ -1,4 +1,4 @@
-import { Pool, QueryResultRow } from 'pg';
+import { Pool, PoolClient, QueryResultRow } from 'pg';
 
 let _pool: Pool | undefined;
 
@@ -57,4 +57,40 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   const pool = getPool();
   const result = await pool.query<T>(text, values as unknown[]);
   return result.rows;
+}
+
+/**
+ * Run a function inside a Postgres transaction. The callback gets a
+ * dedicated `PoolClient` it can call `.query()` on; that's the same
+ * client used for `BEGIN`/`COMMIT`/`ROLLBACK`, so transaction-scoped
+ * features (advisory locks, etc.) work correctly.
+ *
+ *   await withTransaction(async (client) => {
+ *     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [key]);
+ *     await client.query('INSERT INTO clone_ledger (...) VALUES (...)');
+ *   });
+ *
+ * Rolls back on any thrown error and re-throws. The client is released
+ * back to the pool in a `finally`.
+ */
+export async function withTransaction<T>(
+  fn: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackErr: any) {
+      console.warn('[pg] ROLLBACK failed:', rollbackErr.message);
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
