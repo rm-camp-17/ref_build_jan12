@@ -11,7 +11,6 @@
  *   context?: {
  *     dealId?: string       - Required for selection/de-selection transitions
  *     companyId?: string    - Required for selection transitions
- *     programId?: string    - Optional, for program name lookup
  *     previousClientInterest?: string - Required to detect selection transitions
  *   }
  * }
@@ -69,7 +68,6 @@ export async function PATCH(
   const context = body?.context ? {
     dealId: typeof body.context.dealId === 'string' ? body.context.dealId : undefined,
     companyId: typeof body.context.companyId === 'string' ? body.context.companyId : undefined,
-    programId: typeof body.context.programId === 'string' ? body.context.programId : undefined,
     previousClientInterest: typeof body.context.previousClientInterest === 'string' ? body.context.previousClientInterest : undefined,
   } : undefined;
 

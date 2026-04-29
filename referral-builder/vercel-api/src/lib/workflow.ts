@@ -11,8 +11,6 @@
  *    - Referral ↔ Deal
  *    - Referral ↔ Company (with "Recommendation" or "Selected_Referral" label)
  *    - Deal ↔ Company (always created when referral is created)
- *    - Referral ↔ Program (optional)
- *    - Referral ↔ Sessions (optional, supports multiple)
  * 7. Return structured result
  *
  * Association Labels:
@@ -22,13 +20,11 @@
  * Computed fields set by this workflow:
  * - hubspot_owner_id: from Deal.hubspot_owner_id
  * - resend_requested: true if referral_outreach_status == "Resend"
- * - selected_session_start_date, selected_session_end_date, selected_session_price:
- *   Only set when client_interest == "Selected" AND selectedBillingSessionId is provided
  *
  * Deal Integration (when client_interest == "Selected"):
  * - Checks for existing Selected referral on the deal (prevents duplicates)
  * - Reads Company.programid (legacy ID = PostgreSQL companies.access_id)
- * - Reads Program object name (for deal.programname)
+ * - Uses Company name as deal.programname (Program HubSpot object does not exist)
  * - Writes deal properties: program_id, programname, dealstage → "Tuition Undecided"
  * - This activates the Session Selection card for tuition entry
  *
@@ -167,24 +163,6 @@ async function fetchCompanyProgramId(companyId: string): Promise<string | null> 
     return programId.trim();
   } catch (error: any) {
     console.error(`[workflow] Failed to fetch company programid for ${companyId}:`, error.message);
-    return null;
-  }
-}
-
-/**
- * Fetch Program object name for the programname deal property.
- * Falls back to company name if no Program object is associated.
- */
-async function fetchProgramName(programId: string): Promise<string | null> {
-  try {
-    const program = await hubspotClient.crm.objects.basicApi.getById(
-      config.objectTypes.program,
-      programId,
-      [config.properties.program.name]
-    );
-    return program.properties[config.properties.program.name] || null;
-  } catch (error: any) {
-    console.warn(`[workflow] Failed to fetch program name for ${programId}:`, error.message);
     return null;
   }
 }
@@ -352,35 +330,6 @@ async function fetchCompanyName(companyId: string): Promise<string | undefined> 
 }
 
 /**
- * Fetch Session data for billing session fields
- */
-async function fetchSessionData(sessionId: string): Promise<{
-  startDate?: string;
-  endDate?: string;
-  price?: string;
-} | null> {
-  try {
-    const session = await hubspotClient.crm.objects.basicApi.getById(
-      config.objectTypes.session,
-      sessionId,
-      [
-        config.properties.session.startDate,
-        config.properties.session.endDate,
-        config.properties.session.price,
-      ]
-    );
-    return {
-      startDate: session.properties[config.properties.session.startDate] || undefined,
-      endDate: session.properties[config.properties.session.endDate] || undefined,
-      price: session.properties[config.properties.session.price] || undefined,
-    };
-  } catch (error: any) {
-    console.error(`[workflow] Failed to fetch session ${sessionId}:`, error.message);
-    return null;
-  }
-}
-
-/**
  * Check if outreach status indicates resend is requested
  */
 function isResendRequested(outreachStatus: string | null | undefined): boolean {
@@ -525,10 +474,14 @@ async function createOrUpdateReferral(
  *
  * Supports:
  * - Deal ↔ Company (always created when referral is created)
- * - Multiple sessions (sessionIds array)
- * - Association labels:
+ *
+ * Association labels (string form — see PR for numeric type IDs):
  *   - "Recommendation" for Referral ↔ Company (default)
  *   - "Selected_Referral" for Referral ↔ Company when client_interest == "Selected"
+ *
+ * Program / Session associations are intentionally absent: those custom
+ * objects do not exist in portal 50530609. Sessions live in Postgres and
+ * are referenced by `Company.programid` instead.
  */
 function buildAssociationSpecs(
   referralId: string,
@@ -566,44 +519,6 @@ function buildAssociationSpecs(
     toId: input.companyId,
     toType: 'companies',
   });
-
-  // Optional: Referral ↔ Program
-  if (input.programId) {
-    specs.push({
-      fromId: referralId,
-      fromType: config.objectTypes.referral,
-      toId: input.programId,
-      toType: config.objectTypes.program,
-    });
-  }
-
-  // Collect all session IDs to associate
-  const allSessionIds = new Set<string>();
-
-  // Add sessions from sessionIds array
-  if (input.sessionIds && input.sessionIds.length > 0) {
-    for (const sid of input.sessionIds) {
-      allSessionIds.add(sid);
-    }
-  }
-
-  // Add single sessionId for backwards compatibility
-  if (input.sessionId) {
-    allSessionIds.add(input.sessionId);
-  }
-
-  // Create associations for all sessions
-  // Use "Selected_Referral" label when client_interest is "Selected"
-  const isSelected = isClientInterestSelected(input.clientInterest);
-  for (const sessionId of allSessionIds) {
-    specs.push({
-      fromId: referralId,
-      fromType: config.objectTypes.referral,
-      toId: sessionId,
-      toType: config.objectTypes.session,
-      label: isSelected ? 'Selected_Referral' : undefined,
-    });
-  }
 
   return specs;
 }
@@ -665,17 +580,13 @@ export async function createReferralWorkflow(
     }
   }
 
-  // Step 2: Fetch Deal and Company data in parallel
-  // Also fetch billing session data and company programid if marking Selected
-  const shouldFetchBillingSession =
-    isSelected && input.selectedBillingSessionId;
-
-  const [dealData, companyName, billingSessionData, companyProgramId] = await Promise.all([
+  // Step 2: Fetch Deal and Company data in parallel.
+  // Also fetch company.programid if marking Selected (mandatory for the
+  // session-card hand-off — programid maps to the Postgres companies.access_id
+  // used to look up sessions in the external session DB).
+  const [dealData, companyName, companyProgramId] = await Promise.all([
     fetchDealData(input.dealId),
     fetchCompanyName(input.companyId),
-    shouldFetchBillingSession
-      ? fetchSessionData(input.selectedBillingSessionId!)
-      : Promise.resolve(null),
     isSelected
       ? fetchCompanyProgramId(input.companyId)
       : Promise.resolve(null),
@@ -691,7 +602,7 @@ export async function createReferralWorkflow(
     };
   }
 
-  console.log(`[workflow] Fetched data - Deal owner: ${dealData.ownerId}, Company: ${companyName}, Session: ${billingSessionData ? 'yes' : 'no'}`);
+  console.log(`[workflow] Fetched data - Deal owner: ${dealData.ownerId}, Company: ${companyName}`);
 
   // Step 3: Build canonical payload with computed fields
   const payload = buildReferralPayload(input);
@@ -728,19 +639,10 @@ export async function createReferralWorkflow(
     ? 'true'
     : 'false';
 
-  // selected_session_* fields - only if client_interest == "Selected" AND billing session provided
-  if (isClientInterestSelected(input.clientInterest) && billingSessionData) {
-    if (billingSessionData.startDate) {
-      payload.properties[config.properties.referral.selectedSessionStartDate] = billingSessionData.startDate;
-    }
-    if (billingSessionData.endDate) {
-      payload.properties[config.properties.referral.selectedSessionEndDate] = billingSessionData.endDate;
-    }
-    if (billingSessionData.price) {
-      payload.properties[config.properties.referral.selectedSessionPrice] = billingSessionData.price;
-    }
-    console.log(`[workflow] Set selected session fields from billing session ${input.selectedBillingSessionId}`);
-  }
+  // selected_session_* fields are populated downstream by the unified app's
+  // session-selection flow (Postgres-backed, wired in Phase 3). They are no
+  // longer set here from a HubSpot Session object — that object type does not
+  // exist in this portal.
 
   // Step 4: Create or update referral
   let referralId: string;
@@ -780,10 +682,11 @@ export async function createReferralWorkflow(
   // Writes: program_id, programname, dealstage → "Program Selected - Tuition Undecided"
   let dealUpdated = false;
   if (isSelected && companyProgramId) {
-    // Get program name (prefer Program object name, fall back to company name)
-    const programName = input.programId
-      ? (await fetchProgramName(input.programId)) || companyName || 'Unknown Program'
-      : companyName || 'Unknown Program';
+    // Use the Company name as deal.programname. Earlier code fetched a
+    // separate Program custom-object name, but Program is not a HubSpot
+    // object in this portal; the camp's name on the Company record is the
+    // canonical display name.
+    const programName = companyName || 'Unknown Program';
 
     const dealUpdateResult = await updateDealForSelection(
       input.dealId,
@@ -860,7 +763,7 @@ export interface UpdateWorkflowResult {
 export async function updateReferralWorkflow(
   referralId: string,
   properties: Record<string, string>,
-  context?: { dealId?: string; companyId?: string; programId?: string; previousClientInterest?: string }
+  context?: { dealId?: string; companyId?: string; previousClientInterest?: string }
 ): Promise<UpdateWorkflowResult> {
   if (!referralId || !/^\d+$/.test(referralId)) {
     return {
@@ -904,10 +807,10 @@ export async function updateReferralWorkflow(
       };
     }
 
-    // Get program name
-    const programName = context.programId
-      ? (await fetchProgramName(context.programId)) || (await fetchCompanyName(context.companyId)) || 'Unknown Program'
-      : (await fetchCompanyName(context.companyId)) || 'Unknown Program';
+    // Use the Company name as deal.programname (Program HubSpot object does
+    // not exist in this portal — the camp name on the Company record is the
+    // canonical display name).
+    const programName = (await fetchCompanyName(context.companyId)) || 'Unknown Program';
 
     // Update the referral first
     try {

@@ -100,21 +100,6 @@ function mockCompanyFetch(programid: string | null = '1544', name: string = 'Cam
   });
 }
 
-// Helper to mock program fetch
-function mockProgramFetch(name: string = 'Summer Adventure') {
-  mockHubspot.crm.objects.basicApi.getById.mockImplementation(
-    (objectType: string, _id: string, _props: string[]) => {
-      if (objectType === 'p_program') {
-        return Promise.resolve({ properties: { name } });
-      }
-      // Session data
-      return Promise.resolve({
-        properties: { start_date: '2026-06-15', end_date: '2026-08-15', price: '5000' },
-      });
-    }
-  );
-}
-
 // Helper for referral search (findExistingReferral)
 function mockReferralSearch(existingId: string | null = null) {
   mockHubspot.crm.objects.searchApi.doSearch.mockResolvedValue({
@@ -132,10 +117,9 @@ beforeEach(() => {
 });
 
 describe('createReferralWorkflow — Selected integration', () => {
-  test('writes program_id, programname, dealstage to deal when interest is Selected', async () => {
+  test('writes program_id, programname (= company name), dealstage when interest is Selected', async () => {
     mockDealFetch();
     mockCompanyFetch('1544', 'Camp Sunshine');
-    mockProgramFetch('Summer Adventure');
     mockReferralSearch(null);
     mockReferralCreate('99901');
     mockHubspot.crm.deals.basicApi.update.mockResolvedValue({});
@@ -144,18 +128,19 @@ describe('createReferralWorkflow — Selected integration', () => {
     const result = await createReferralWorkflow({
       dealId: '100',
       companyId: '200',
-      programId: '300',
       clientInterest: 'Selected',
     });
 
     expect(result.success).toBe(true);
     expect(result.dealUpdated).toBe(true);
 
-    // Verify deal was updated with correct properties
+    // Verify deal was updated with correct properties.
+    // programname now uses Company.name directly — Program HubSpot object
+    // doesn't exist in this portal.
     expect(mockHubspot.crm.deals.basicApi.update).toHaveBeenCalledWith('100', {
       properties: {
         program_id: '1544',
-        programname: 'Summer Adventure',
+        programname: 'Camp Sunshine',
         dealstage: '1282923123',
       },
     });
@@ -201,20 +186,18 @@ describe('createReferralWorkflow — Selected integration', () => {
     expect(result.errors?.[0]).toContain('already marked Selected');
   });
 
-  test('falls back to company name when no Program object', async () => {
+  test('uses company name as programname (no Program HubSpot object exists)', async () => {
     mockDealFetch();
     mockCompanyFetch('1544', 'Camp Sunshine');
     mockReferralSearch(null);
     mockReferralCreate('99901');
     mockHubspot.crm.deals.basicApi.update.mockResolvedValue({});
     mockHubspot.crm.objects.batchApi.read.mockResolvedValue({ results: [] });
-    // No programId in input → no program name fetch → falls back to company name
 
     const result = await createReferralWorkflow({
       dealId: '100',
       companyId: '200',
       clientInterest: 'Selected',
-      // programId intentionally omitted
     });
 
     expect(result.success).toBe(true);
@@ -228,7 +211,6 @@ describe('createReferralWorkflow — Selected integration', () => {
   test('returns error when deal PATCH fails', async () => {
     mockDealFetch();
     mockCompanyFetch('1544', 'Camp Sunshine');
-    mockProgramFetch('Summer Adventure');
     mockReferralSearch(null);
     mockReferralCreate('99901');
     mockHubspot.crm.objects.batchApi.read.mockResolvedValue({ results: [] });
@@ -239,7 +221,6 @@ describe('createReferralWorkflow — Selected integration', () => {
     const result = await createReferralWorkflow({
       dealId: '100',
       companyId: '200',
-      programId: '300',
       clientInterest: 'Selected',
     });
 
