@@ -56,6 +56,7 @@ const SESSION_CARD_PROPERTIES: ReadonlyArray<string> = [
   'program_id',
   'programname',
   'associated_child_id',
+  'associated_household_id',
   'deal_currency_code',
   'tuition_at_enrollment',
   'amount',
@@ -68,6 +69,18 @@ const SESSION_CARD_PROPERTIES: ReadonlyArray<string> = [
   'session_id',
   'hubspot_owner_id',
   'deal_key',
+  // Billing / commission (read-only from the card's perspective — Rule 1)
+  'ce_commission_amount',
+  'ce_amount_received',
+  'ce_invoice_status',
+  'commission_status',
+  'commission_locked',
+  // Win/loss reason capture (Phase 4 / Phase 5)
+  'closed_won_category',
+  'closed_won_reason',
+  'closed_lost_category',
+  'closed_lost_reason',
+  'wait_until_year',
 ];
 
 // ============================================================================
@@ -80,6 +93,7 @@ export interface DealRecord {
   dealname: string | null;
   deal_key: string | null;
   associated_child_id: string | null;
+  associated_household_id: string | null;
   hubspot_owner_id: string | null;
   // Pipeline + stage
   pipeline: string | null;
@@ -100,6 +114,18 @@ export interface DealRecord {
   // Misc
   note_1: string | null;
   commission_rate: string | null;
+  // Billing / commission (Rule 1: card reads but never writes)
+  ce_commission_amount: string | null;
+  ce_amount_received: string | null;
+  ce_invoice_status: string | null;
+  commission_status: string | null;
+  commission_locked: string | null;
+  // Win/loss reason capture
+  closed_won_category: string | null;
+  closed_won_reason: string | null;
+  closed_lost_category: string | null;
+  closed_lost_reason: string | null;
+  wait_until_year: string | null;
 }
 
 // ============================================================================
@@ -122,6 +148,7 @@ export async function getDeal(dealId: string): Promise<DealRecord | null> {
       dealname: p.dealname ?? null,
       deal_key: p.deal_key ?? null,
       associated_child_id: p.associated_child_id ?? null,
+      associated_household_id: p.associated_household_id ?? null,
       hubspot_owner_id: p.hubspot_owner_id ?? null,
       pipeline: p.pipeline ?? null,
       dealstage: p.dealstage ?? null,
@@ -138,6 +165,16 @@ export async function getDeal(dealId: string): Promise<DealRecord | null> {
       session_end_date: p.session_end_date ?? null,
       note_1: p.note_1 ?? null,
       commission_rate: p.commission_rate ?? null,
+      ce_commission_amount: p.ce_commission_amount ?? null,
+      ce_amount_received: p.ce_amount_received ?? null,
+      ce_invoice_status: p.ce_invoice_status ?? null,
+      commission_status: p.commission_status ?? null,
+      commission_locked: p.commission_locked ?? null,
+      closed_won_category: p.closed_won_category ?? null,
+      closed_won_reason: p.closed_won_reason ?? null,
+      closed_lost_category: p.closed_lost_category ?? null,
+      closed_lost_reason: p.closed_lost_reason ?? null,
+      wait_until_year: p.wait_until_year ?? null,
     };
   } catch (err: any) {
     if (err?.code === 404 || err?.statusCode === 404) {

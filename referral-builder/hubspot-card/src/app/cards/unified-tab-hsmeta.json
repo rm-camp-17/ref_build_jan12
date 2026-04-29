@@ -1,0 +1,11 @@
+{
+  "uid": "camp_unified_card_tab",
+  "type": "card",
+  "config": {
+    "name": "Camp Experts — Deal Lifecycle (Tab)",
+    "description": "Same stage-aware card with extra horizontal space for the referral table.",
+    "location": "crm.record.tab",
+    "entrypoint": "/app/cards/UnifiedCard.tsx",
+    "objectTypes": ["deals"]
+  }
+}

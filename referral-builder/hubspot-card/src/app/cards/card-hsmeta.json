@@ -1,11 +1,11 @@
 {
-  "uid": "camp_referral_builder_card",
+  "uid": "camp_unified_card",
   "type": "card",
   "config": {
-    "name": "Referral Builder",
-    "description": "Create and manage referrals for this Deal.",
+    "name": "Camp Experts — Deal Lifecycle",
+    "description": "Stage-aware deal management — referrals, session, billing.",
     "location": "crm.record.sidebar",
-    "entrypoint": "/app/cards/ReferralBuilderCard.tsx",
+    "entrypoint": "/app/cards/UnifiedCard.tsx",
     "objectTypes": ["deals"]
   }
 }
