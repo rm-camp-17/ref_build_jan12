@@ -52,6 +52,10 @@ import {
 } from './associations';
 import { withTransaction } from './pg';
 import {
+  dualWriteReferralProperty,
+  pickReferralProperty,
+} from './property-aliases';
+import {
   logSacredFieldChange,
   diffSacredFieldChanges,
   SACRED_DEAL_FIELDS,
@@ -188,19 +192,25 @@ async function findExistingSelectedReferral(dealId: string): Promise<string | nu
 
     if (referralIds.length === 0) return null;
 
-    // Batch read client_interest for all referrals
-    // HubSpot batch read supports up to 100 IDs
+    // Batch read client_interest for all referrals.
+    // We fetch BOTH the canonical (`client_interest`) and legacy
+    // (`referral_client_interest`) names so we don't miss records that only
+    // have data on the legacy side during the migration window.
+    // HubSpot batch read supports up to 100 IDs.
     const batchResult = await hubspotClient.crm.objects.batchApi.read(
       config.objectTypes.referral,
       {
         inputs: referralIds.map((id) => ({ id })),
-        properties: [config.properties.referral.interest],
+        properties: [
+          config.properties.referral.interestCanonical,
+          config.properties.referral.interest,
+        ],
         propertiesWithHistory: [],
       }
     );
 
     for (const result of batchResult.results) {
-      const interest = result.properties[config.properties.referral.interest];
+      const interest = pickReferralProperty(result.properties, 'interest');
       if (isClientInterestSelected(interest)) {
         return result.id;
       }
@@ -336,13 +346,14 @@ async function revertReferralInterest(
   previousInterest: string | undefined
 ): Promise<void> {
   // If the previous value was empty/unknown, write the empty string —
-  // HubSpot accepts that as "clear the property."
+  // HubSpot accepts that as "clear the property." Dual-write canonical +
+  // legacy names so the revert lands no matter which side a future read uses.
   const value = previousInterest ?? '';
   try {
     await hubspotClient.crm.objects.basicApi.update(
       config.objectTypes.referral,
       referralId,
-      { properties: { [config.properties.referral.interest]: value } }
+      { properties: dualWriteReferralProperty('interest', value) }
     );
     console.log(
       `[workflow] Compensation: reverted referral ${referralId} client_interest → "${value}"`
@@ -491,9 +502,7 @@ async function runSelectedTransitionSaga(args: {
         config.objectTypes.referral,
         referralId,
         {
-          properties: {
-            [config.properties.referral.interest]: 'Selected',
-          },
+          properties: dualWriteReferralProperty('interest', 'Selected'),
         }
       );
     } catch (err: any) {
@@ -1016,7 +1025,10 @@ export async function createReferralWorkflow(
   payload.properties[config.properties.referral.copiedYear] = String(referralYear);
 
   // resend_requested - computed from outreach status
-  const outreachStatus = input.outreachStatus || payload.properties[config.properties.referral.outreach];
+  const outreachStatus =
+    input.outreachStatus ||
+    payload.properties[config.properties.referral.outreachCanonical] ||
+    payload.properties[config.properties.referral.outreach];
   payload.properties[config.properties.referral.resendRequested] = isResendRequested(outreachStatus)
     ? 'true'
     : 'false';
@@ -1169,7 +1181,7 @@ export async function updateReferralWorkflow(
     };
   }
 
-  const newInterest = properties[config.properties.referral.interest];
+  const newInterest = pickReferralProperty(properties, 'interest');
   const isNowSelected = isClientInterestSelected(newInterest);
   const wasSelected = isClientInterestSelected(context?.previousClientInterest);
 
@@ -1208,7 +1220,9 @@ export async function updateReferralWorkflow(
 
     // First write any non-interest properties the caller asked for
     // (note, status). The interest flip is owned by the saga's STEP 1.
+    // Strip both names since validation may have dual-written.
     const nonInterestProps = { ...properties };
+    delete nonInterestProps[config.properties.referral.interestCanonical];
     delete nonInterestProps[config.properties.referral.interest];
     if (Object.keys(nonInterestProps).length > 0) {
       try {
