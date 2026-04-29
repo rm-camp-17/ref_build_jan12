@@ -15,7 +15,24 @@ export interface AssociationSpec {
   fromType: string;
   toId: string;
   toType: string;
-  label?: string; // Optional association label (e.g., "Selected_Referral" for selected session)
+  /**
+   * Optional explicit HubSpot association type ID. Preferred over `label` —
+   * skips the schema lookup and uses the ID directly. Get the IDs from
+   * `CUSTOM_OBJECT_SCHEMAS.md`'s "Cross-object association map".
+   */
+  typeId?: number;
+  /**
+   * Association category. Defaults to USER_DEFINED for custom-labeled types
+   * (`selected_referral` = 152, `referred` = 155, etc.) and HUBSPOT_DEFINED
+   * for standard pairs without a custom label. Required when typeId is set.
+   */
+  category?: 'HUBSPOT_DEFINED' | 'USER_DEFINED';
+  /**
+   * @deprecated Prefer `typeId` + `category`. Label-based lookup hits the
+   * HubSpot schema-definitions API and falls back to the first association
+   * type if the label is not found, which can silently mask config drift.
+   */
+  label?: string;
 }
 
 export interface AssociationResult {
@@ -182,22 +199,32 @@ export async function associationExists(
 export async function createAssociationIdempotent(
   spec: AssociationSpec
 ): Promise<AssociationResult> {
-  const { fromId, fromType, toId, toType, label } = spec;
+  const { fromId, fromType, toId, toType, label, typeId, category } = spec;
 
   try {
-    // First check if association already exists
-    // Note: This checks for any association, not specifically labeled ones
+    // For unlabeled, no-typeId associations, dedup against existing edges.
+    // Labeled / typeId-pinned associations may legitimately coexist with the
+    // default unlabeled edge between the same pair, so we don't dedup those.
     const exists = await associationExists(fromType, fromId, toType, toId);
-    if (exists && !label) {
-      // For unlabeled associations, skip if already exists
+    if (exists && !label && typeId === undefined) {
       console.log(
         `[associations] Association already exists: ${fromType}:${fromId} → ${toType}:${toId}`
       );
       return { success: true, alreadyExists: true };
     }
 
-    // Get association type info (typeId and category)
-    const typeInfo = await getAssociationTypeId(fromType, toType, label);
+    // Resolve typeId + category. Prefer explicit pinning; fall back to
+    // schema-definitions lookup by label.
+    let resolvedTypeId: number;
+    let resolvedCategory: 'HUBSPOT_DEFINED' | 'USER_DEFINED';
+    if (typeId !== undefined) {
+      resolvedTypeId = typeId;
+      resolvedCategory = category ?? 'HUBSPOT_DEFINED';
+    } else {
+      const typeInfo = await getAssociationTypeId(fromType, toType, label);
+      resolvedTypeId = typeInfo.typeId;
+      resolvedCategory = typeInfo.category;
+    }
 
     // Create association using v4 batch API (correct for SDK v11.x)
     await hubspotClient.crm.associations.v4.batchApi.create(
@@ -210,8 +237,8 @@ export async function createAssociationIdempotent(
             to: { id: toId },
             types: [
               {
-                associationCategory: typeInfo.category as any,
-                associationTypeId: typeInfo.typeId,
+                associationCategory: resolvedCategory as any,
+                associationTypeId: resolvedTypeId,
               },
             ],
           },
@@ -220,7 +247,7 @@ export async function createAssociationIdempotent(
     );
 
     console.log(
-      `[associations] Created: ${fromType}:${fromId} → ${toType}:${toId}${label ? ` (label: ${label})` : ''}`
+      `[associations] Created: ${fromType}:${fromId} → ${toType}:${toId} (typeId: ${resolvedTypeId}${label ? `, label: ${label}` : ''})`
     );
     return { success: true, alreadyExists: false };
   } catch (error: any) {

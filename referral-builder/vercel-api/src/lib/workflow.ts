@@ -13,10 +13,6 @@
  *    - Deal ↔ Company (always created when referral is created)
  * 7. Return structured result
  *
- * Association Labels:
- * - "Recommendation": Default label for Referral ↔ Company associations
- * - "Selected_Referral": Label for Referral ↔ Company when client_interest == "Selected"
- *
  * Computed fields set by this workflow:
  * - hubspot_owner_id: from Deal.hubspot_owner_id
  * - resend_requested: true if referral_outreach_status == "Resend"
@@ -490,30 +486,47 @@ function buildAssociationSpecs(
 ): AssociationSpec[] {
   const specs: AssociationSpec[] = [];
 
-  // Always: Referral ↔ Deal
+  // Always: Referral → Deal via `deal_to_referrals` (typeId 137)
+  // This is the default edge used to enumerate all referrals on a deal.
   specs.push({
     fromId: referralId,
     fromType: config.objectTypes.referral,
     toId: input.dealId,
     toType: 'deals',
+    typeId: 137,
+    category: 'USER_DEFINED',
   });
 
-  // Always: Referral ↔ Company with appropriate label
-  // Use "Selected_Referral" label when client_interest is "Selected", otherwise "Recommendation"
-  const companyLabel = isClientInterestSelected(input.clientInterest)
-    ? 'Selected_Referral'
-    : 'Recommendation';
+  // Conditionally: Referral → Deal via `selected_referral` (typeId 152)
+  // Marks WHICH referral the family chose. Created in addition to the
+  // default `deal_to_referrals` edge above when client_interest = Selected.
+  // The session card reads this label to determine which referral to surface.
+  if (isClientInterestSelected(input.clientInterest)) {
+    specs.push({
+      fromId: referralId,
+      fromType: config.objectTypes.referral,
+      toId: input.dealId,
+      toType: 'deals',
+      typeId: 152,
+      category: 'USER_DEFINED',
+    });
+  }
 
+  // Always: Referral → Company via `company_to_referrals` (typeId 139)
+  // Default edge linking the referral to the camp it points at.
+  // (HubSpot also defines a separate `referred` label/typeId 155 with
+  // different semantics; we don't use it here.)
   specs.push({
     fromId: referralId,
     fromType: config.objectTypes.referral,
     toId: input.companyId,
     toType: 'companies',
-    label: companyLabel,
+    typeId: 139,
+    category: 'USER_DEFINED',
   });
 
-  // Always: Deal ↔ Company (idempotent - won't create duplicates)
-  // Every referral should link its deal to its company
+  // Always: Deal ↔ Company (default unlabeled HubSpot association)
+  // Every referral should link its deal to its company. Idempotent.
   specs.push({
     fromId: input.dealId,
     fromType: 'deals',
