@@ -88,6 +88,7 @@ export interface DealDetails {
   closed_lost_reason: string | null;
   wait_until_year: string | null;
   note_1: string | null;
+  parent_contact_count: number;
 }
 
 // ============================================================================

@@ -18,30 +18,18 @@
  * HubSpot's right-sidebar associations panel.
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import React from "react";
 import {
-  hubspot,
   Alert,
   Box,
   Button,
   Divider,
   Flex,
   Heading,
-  LoadingSpinner,
   Tag,
   Text,
 } from "@hubspot/ui-extensions";
 import { DealDetails, isCommissionLocked } from "./types";
-
-// ============================================================================
-// Association status (read-only check — Phase 5 builds the create flow)
-// ============================================================================
-
-interface AssociationStatus {
-  child: boolean;
-  household: boolean;
-  parentContact: boolean;
-}
 
 interface Props {
   dealId: string;
@@ -51,71 +39,20 @@ interface Props {
 }
 
 export function SetupView({
-  dealId,
   details,
   onMarkLost,
   onRefresh,
 }: Props) {
-  const [assocLoading, setAssocLoading] = useState(true);
-  const [assoc, setAssoc] = useState<AssociationStatus>({
-    child: false,
-    household: false,
-    parentContact: false,
-  });
-  const [assocError, setAssocError] = useState<string | null>(null);
-
   const locked = isCommissionLocked(details);
 
-  // ------------------------------------------------------------------
-  // Read-side associations check.
-  //
-  // Pragmatic shortcut for Phase 4: rather than waiting on Agent G's
-  // /api/deals/[dealId]/setup-status route, infer Child + Household from
-  // the deal-property IDs we already fetch via /details, and call
-  // HubSpot's CRM v4 associations endpoint directly for the
-  // Deal → Contact check. The detailed Phase 5 endpoint can replace
-  // this once it lands; the props are unchanged.
-  // ------------------------------------------------------------------
-  const loadAssociations = useCallback(async () => {
-    if (!dealId) return;
-    setAssocLoading(true);
-    setAssocError(null);
-
-    try {
-      const child = !!(details?.associated_child_id && details.associated_child_id.trim() !== "");
-      const household = !!(
-        details?.associated_household_id &&
-        details.associated_household_id.trim() !== ""
-      );
-
-      // Parent contacts: count default Deal → Contact associations.
-      let parentContact = false;
-      try {
-        const resp = await hubspot.fetch(
-          `https://api.hubapi.com/crm/v4/objects/deals/${dealId}?associations=contacts`
-        );
-        if (resp.ok) {
-          const data = await resp.json();
-          const results = data?.associations?.contacts?.results ?? [];
-          parentContact = results.length > 0;
-        }
-      } catch (e) {
-        // Non-fatal — leave parentContact false; the row will render an X
-        // and the rep can still proceed with Add Referrals.
-        console.warn("Could not check parent-contact associations", e);
-      }
-
-      setAssoc({ child, household, parentContact });
-    } catch (e: any) {
-      setAssocError(e?.message || "Failed to load associations.");
-    } finally {
-      setAssocLoading(false);
-    }
-  }, [dealId, details]);
-
-  useEffect(() => {
-    loadAssociations();
-  }, [loadAssociations]);
+  const child = !!(
+    details?.associated_child_id && details.associated_child_id.trim() !== ""
+  );
+  const household = !!(
+    details?.associated_household_id &&
+    details.associated_household_id.trim() !== ""
+  );
+  const parentContact = (details?.parent_contact_count ?? 0) > 0;
 
   return (
     <Flex direction="column" gap="sm">
@@ -125,33 +62,23 @@ export function SetupView({
         Recommendation Plan Presented to start adding referrals.
       </Text>
 
-      {assocError && (
-        <Alert title="Error" variant="error">
-          {assocError}
-        </Alert>
-      )}
-
-      {assocLoading ? (
-        <LoadingSpinner label="Checking associations..." size="small" />
-      ) : (
-        <Flex direction="column" gap="xs">
-          <ChecklistRow
-            label="Associated Child"
-            ok={assoc.child}
-            disabled={locked}
-          />
-          <ChecklistRow
-            label="Associated Household"
-            ok={assoc.household}
-            disabled={locked}
-          />
-          <ChecklistRow
-            label="Parent Contact(s)"
-            ok={assoc.parentContact}
-            disabled={locked}
-          />
-        </Flex>
-      )}
+      <Flex direction="column" gap="xs">
+        <ChecklistRow
+          label="Associated Child"
+          ok={child}
+          disabled={locked}
+        />
+        <ChecklistRow
+          label="Associated Household"
+          ok={household}
+          disabled={locked}
+        />
+        <ChecklistRow
+          label="Parent Contact(s)"
+          ok={parentContact}
+          disabled={locked}
+        />
+      </Flex>
 
       <Divider />
 
