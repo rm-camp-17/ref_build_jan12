@@ -266,7 +266,7 @@ describe('createReferralWorkflow — Selected integration', () => {
 });
 
 describe('updateReferralWorkflow — de-selection tiers', () => {
-  test('Tier 1: allows de-selection and resets deal when no tuition entered', async () => {
+  test('reset: allows de-selection and resets deal when at Tuition Undecided with no tuition', async () => {
     mockDealFetch({ dealstage: '1282923123', tuition_at_enrollment: '' });
     mockHubspot.crm.objects.basicApi.update.mockResolvedValue({});
     mockHubspot.crm.deals.basicApi.update.mockResolvedValue({});
@@ -292,7 +292,7 @@ describe('updateReferralWorkflow — de-selection tiers', () => {
     });
   });
 
-  test('Tier 2: blocks de-selection when tuition has been entered', async () => {
+  test('block: blocks de-selection when tuition has been entered (Won)', async () => {
     mockDealFetch({
       dealstage: 'decisionmakerboughtin',
       tuition_at_enrollment: '5000',
@@ -313,11 +313,12 @@ describe('updateReferralWorkflow — de-selection tiers', () => {
     expect(mockHubspot.crm.objects.basicApi.update).not.toHaveBeenCalled();
   });
 
-  test('Tier 3: hard blocks de-selection when deal is Closed Won', async () => {
-    mockDealFetch({
-      dealstage: '1282918770',
-      tuition_at_enrollment: '5000',
-    });
+  test('noOp: allows de-selection on Closed Lost deal without resetting deal stage', async () => {
+    // Previously this fell through to a "reset" that silently re-opened
+    // closed-lost deals back to Recommendation Presented. Now the action is
+    // noOp: update the referral, leave the deal stage alone.
+    mockDealFetch({ dealstage: 'closedlost', tuition_at_enrollment: '' });
+    mockHubspot.crm.objects.basicApi.update.mockResolvedValue({});
 
     const result = await updateReferralWorkflow(
       '99901',
@@ -328,9 +329,15 @@ describe('updateReferralWorkflow — de-selection tiers', () => {
       }
     );
 
-    expect(result.success).toBe(false);
-    expect(result.errors?.[0]).toContain('finalized');
-    expect(mockHubspot.crm.objects.basicApi.update).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    // Referral updated
+    expect(mockHubspot.crm.objects.basicApi.update).toHaveBeenCalledWith(
+      '2-55790899',
+      '99901',
+      { properties: { referral_client_interest: 'Declined' } }
+    );
+    // Deal stage NOT touched
+    expect(mockHubspot.crm.deals.basicApi.update).not.toHaveBeenCalled();
   });
 
   test('standard update (no selection transition) works without context', async () => {

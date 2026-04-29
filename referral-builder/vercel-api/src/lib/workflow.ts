@@ -86,22 +86,26 @@ interface CreateOrUpdateResult {
 // ============================================================================
 
 /**
- * Three-tier de-selection result
+ * Two-tier de-selection result (collapsed from earlier 3-tier model).
  *
- * When a referral's client_interest changes FROM "Selected" to something else,
- * the action depends on the deal's current state:
+ * In the active "Deal Pipeline", `decisionmakerboughtin` ("Program Selected")
+ * IS the closed-won state — there's no separate "Closed Won" stage to gate
+ * differently. The earlier Tier 3 hard-block check against `1282918770`
+ * (the historic-pipeline closed-won ID) never matched active deals.
  *
- *   Tier 1: Deal at "Tuition Undecided", no tuition entered
- *           → Allow freely. Reset program_id, programname, move to rollback stage.
- *   Tier 2: Deal at "Program Selected" (tuition entered, not closed)
- *           → Block de-selection.
- *   Tier 3: Deal at "Closed Won" or beyond
- *           → Hard block.
+ * When a referral's client_interest changes FROM "Selected" to something else:
+ *
+ *   reset: Deal at "Tuition Undecided", no tuition entered
+ *          → Allow. Reset program_id, programname, dealstage to Recommendation Presented.
+ *   block: Deal at "Program Selected" (tuition entered = won)
+ *          → Block de-selection.
+ *   noOp:  Any other stage (Recommendation Presented, Closed Lost, etc.)
+ *          → Allow. Update referral only; leave deal stage unchanged.
  */
 type DeSelectionResult =
-  | { tier: 1; action: 'reset'; rollbackStageId: string }
-  | { tier: 2; action: 'block'; message: string }
-  | { tier: 3; action: 'hardBlock'; message: string };
+  | { action: 'reset'; rollbackStageId: string }
+  | { action: 'block'; message: string }
+  | { action: 'noOp' };
 
 // ============================================================================
 // Internal Helper Functions
@@ -283,39 +287,36 @@ async function resetDealForDeSelection(
 }
 
 /**
- * Determine de-selection tier based on deal state.
+ * Determine de-selection action based on deal state.
  */
 function determineDeSelectionTier(dealData: {
   dealstage?: string;
   tuitionAtEnrollment?: string;
 }): DeSelectionResult {
   const { dealstage, tuitionAtEnrollment } = dealData;
-  const hasTuition = tuitionAtEnrollment && parseFloat(tuitionAtEnrollment) > 0;
+  const hasTuition = !!tuitionAtEnrollment && parseFloat(tuitionAtEnrollment) > 0;
 
-  // Tier 3: Closed Won or beyond
-  if (dealstage === config.stages.closedWon) {
-    return {
-      tier: 3,
-      action: 'hardBlock',
-      message: 'This deal has been finalized. Contact admin to make changes.',
-    };
-  }
-
-  // Tier 2: Program Selected (tuition entered)
+  // Block: Program Selected (= Closed Won) with tuition entered
   if (dealstage === config.stages.programSelected && hasTuition) {
     return {
-      tier: 2,
       action: 'block',
       message: 'Tuition has been entered for this session. Clear the session selection on the Session Card tab first.',
     };
   }
 
-  // Tier 1: Tuition Undecided or earlier, no tuition
-  return {
-    tier: 1,
-    action: 'reset',
-    rollbackStageId: config.stages.recommendationPresented,
-  };
+  // Reset: Tuition Undecided — actively roll back to Recommendation Presented
+  if (dealstage === config.stages.tuitionUndecided) {
+    return {
+      action: 'reset',
+      rollbackStageId: config.stages.recommendationPresented,
+    };
+  }
+
+  // No-op: any other stage (Recommendation Presented, Closed Lost, etc.)
+  // Allow the referral edit but leave the deal stage unchanged. Previously
+  // the fall-through reset closed-lost deals back to Recommendation Presented,
+  // which silently re-opened them.
+  return { action: 'noOp' };
 }
 
 /**
@@ -945,13 +946,6 @@ export async function updateReferralWorkflow(
     const dealData = await fetchDealData(context.dealId);
     const deSelectionResult = determineDeSelectionTier(dealData);
 
-    if (deSelectionResult.action === 'hardBlock') {
-      return {
-        success: false,
-        errors: [deSelectionResult.message],
-      };
-    }
-
     if (deSelectionResult.action === 'block') {
       return {
         success: false,
@@ -959,7 +953,7 @@ export async function updateReferralWorkflow(
       };
     }
 
-    // Tier 1: Allow de-selection + reset deal
+    // 'reset' or 'noOp': both update the referral first
     try {
       await hubspotClient.crm.objects.basicApi.update(
         config.objectTypes.referral,
@@ -971,6 +965,12 @@ export async function updateReferralWorkflow(
       return { success: false, errors: [`Failed to update referral: ${error.message}`] };
     }
 
+    if (deSelectionResult.action === 'noOp') {
+      console.log(`[workflow] De-selected referral ${referralId}, deal stage left unchanged (noOp)`);
+      return { success: true };
+    }
+
+    // 'reset': roll back the deal to Recommendation Presented
     const resetResult = await resetDealForDeSelection(
       context.dealId,
       deSelectionResult.rollbackStageId
@@ -982,7 +982,7 @@ export async function updateReferralWorkflow(
       console.warn(`[workflow] Referral de-selected but deal reset failed: ${resetResult.error}`);
     }
 
-    console.log(`[workflow] De-selected referral ${referralId}, deal ${context.dealId} reset (Tier 1)`);
+    console.log(`[workflow] De-selected referral ${referralId}, deal ${context.dealId} reset to Recommendation Presented`);
     return { success: true };
   }
 
