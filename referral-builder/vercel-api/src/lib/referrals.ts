@@ -17,19 +17,14 @@ export interface ReferralData {
   note: string;
   createdAt: string | null;
   company: { id: string; name: string } | null;
-  program: { id: string; name: string } | null;
-  session: {
-    id: string;
-    name: string;
-    startDate?: string;
-    endDate?: string;
-    price?: string;
-    weeks?: string;
-  } | null;
 }
 
 /**
- * Fetch all referrals for a given deal, including associated company/program/session data.
+ * Fetch all referrals for a given deal, including associated company data.
+ *
+ * Program/Session associations are intentionally not fetched: those custom
+ * objects do not exist in this portal. Sessions are looked up from Postgres
+ * via Company.programid in the unified card's session-selection flow.
  */
 export async function fetchReferralsForDeal(dealId: string): Promise<ReferralData[]> {
   const referralIds = await getAssociatedIds('deals', dealId, config.objectTypes.referral);
@@ -63,12 +58,13 @@ export async function fetchReferralsForDeal(dealId: string): Promise<ReferralDat
           );
         }
 
-        // Get associated objects using v4 API
-        const [companyIds, programIds, sessionIds] = await Promise.all([
-          getAssociatedIds(config.objectTypes.referral, referralId, 'companies'),
-          getAssociatedIds(config.objectTypes.referral, referralId, config.objectTypes.program),
-          getAssociatedIds(config.objectTypes.referral, referralId, config.objectTypes.session),
-        ]);
+        // Get associated company (the camp). Program/Session associations are
+        // not fetched — those object types don't exist in this portal.
+        const companyIds = await getAssociatedIds(
+          config.objectTypes.referral,
+          referralId,
+          'companies'
+        );
 
         // Fetch company details
         let companyData: { id: string; name: string } | null = null;
@@ -87,79 +83,6 @@ export async function fetchReferralsForDeal(dealId: string): Promise<ReferralDat
           }
         }
 
-        // Fetch program details
-        let programData: { id: string; name: string } | null = null;
-        if (programIds.length > 0) {
-          const programNameProps = [
-            config.properties.program.name,
-            'program_name',
-            'hs_object_name',
-            'hs_name',
-          ];
-          try {
-            const program = await hubspotClient.crm.objects.basicApi.getById(
-              config.objectTypes.program,
-              programIds[0],
-              programNameProps
-            );
-            let programName = 'Unnamed Program';
-            for (const prop of programNameProps) {
-              if (program.properties[prop]) {
-                programName = program.properties[prop];
-                break;
-              }
-            }
-            programData = {
-              id: program.id,
-              name: programName,
-            };
-          } catch (e) {
-            console.warn(`[referrals] Failed to fetch program ${programIds[0]}`);
-          }
-        }
-
-        // Fetch session details
-        let sessionData: ReferralData['session'] = null;
-        if (sessionIds.length > 0) {
-          const sessionNameProps = [
-            config.properties.session.name,
-            'session_name',
-            'hs_object_name',
-            'hs_name',
-          ];
-          const allSessionProps = [
-            ...sessionNameProps,
-            config.properties.session.startDate,
-            config.properties.session.endDate,
-            config.properties.session.price,
-            config.properties.session.weeks,
-          ];
-          try {
-            const session = await hubspotClient.crm.objects.basicApi.getById(
-              config.objectTypes.session,
-              sessionIds[0],
-              allSessionProps
-            );
-            let sessionName = 'Unnamed Session';
-            for (const prop of sessionNameProps) {
-              if (session.properties[prop]) {
-                sessionName = session.properties[prop];
-                break;
-              }
-            }
-            sessionData = {
-              id: session.id,
-              name: sessionName,
-              startDate: session.properties[config.properties.session.startDate] || undefined,
-              endDate: session.properties[config.properties.session.endDate] || undefined,
-              price: session.properties[config.properties.session.price] || undefined,
-              weeks: session.properties[config.properties.session.weeks] || undefined,
-            };
-          } catch (e) {
-            console.warn(`[referrals] Failed to fetch session ${sessionIds[0]}`);
-          }
-        }
-
         return {
           id: referral.id,
           referralKey: referral.properties[config.properties.referral.key],
@@ -168,8 +91,6 @@ export async function fetchReferralsForDeal(dealId: string): Promise<ReferralDat
           note: referral.properties[config.properties.referral.note] || '',
           createdAt: referral.properties[config.properties.referral.emailLastSentDatetime] || null,
           company: companyData,
-          program: programData,
-          session: sessionData,
         };
       } catch (e: any) {
         console.error(`[referrals] Error fetching referral ${referralId}:`, e.message);

@@ -15,9 +15,12 @@ export const config = {
   },
 
   // Custom object type identifiers
+  // Note: Program and Session are NOT HubSpot custom objects in portal 50530609.
+  // Sessions live in Postgres (camp-experts-session-card's external DB) and are
+  // looked up via Company.programid (= Postgres companies.access_id). Earlier
+  // drafts referenced p_program / p_session HubSpot object types — those were
+  // never created in this portal.
   objectTypes: {
-    program: process.env.HS_PROGRAM_OBJECT_TYPE || 'p_program',
-    session: process.env.HS_SESSION_OBJECT_TYPE || 'p_session',
     referral: process.env.HS_REFERRAL_OBJECT_TYPE || '2-55790899',
     household: process.env.HS_HOUSEHOLD_OBJECT_TYPE || '2-53610744',
     child: process.env.HS_CHILD_OBJECT_TYPE || '2-50911061',
@@ -70,16 +73,6 @@ export const config = {
       status: process.env.HS_COMPANY_STATUS_PROP || 'partner_status',
       // Legacy ID used by Session Card for session lookup (maps to PostgreSQL companies.access_id)
       programId: process.env.HS_COMPANY_PROGRAM_ID_PROP || 'programid',
-    },
-    program: {
-      name: process.env.HS_PROGRAM_NAME_PROP || 'name',
-    },
-    session: {
-      name: process.env.HS_SESSION_NAME_PROP || 'name',
-      startDate: process.env.HS_SESSION_START_PROP || 'start_date',
-      endDate: process.env.HS_SESSION_END_PROP || 'end_date',
-      price: process.env.HS_SESSION_PRICE_PROP || 'price',
-      weeks: process.env.HS_SESSION_WEEKS_PROP || 'weeks',
     },
   },
 
