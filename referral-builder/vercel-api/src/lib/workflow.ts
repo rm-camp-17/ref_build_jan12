@@ -7,26 +7,20 @@
  * 3. Build canonical payload with defaults + computed fields
  * 4. Search for existing referral (upsert logic)
  * 5. Create or update referral (with retry for read-only properties)
- * 6. Create all associations (idempotent), pinned to numeric HubSpot type IDs
- *    (see CUSTOM_OBJECT_SCHEMAS.md "Cross-object association map"):
- *    - Referral → Deal: `deal_to_referrals` (typeId 137) — always
- *    - Referral → Deal: `selected_referral` (typeId 152) — only when Selected
- *    - Referral → Company: `company_to_referrals` (typeId 139) — always
- *    - Deal ↔ Company (default unlabeled) — always
- *    Program / Session associations are not created — those object types
- *    do not exist in this portal.
+ * 6. Create all associations (idempotent)
+ *    - Referral ↔ Deal
+ *    - Referral ↔ Company (with "Recommendation" or "Selected_Referral" label)
+ *    - Deal ↔ Company (always created when referral is created)
  * 7. Return structured result
  *
  * Computed fields set by this workflow:
  * - hubspot_owner_id: from Deal.hubspot_owner_id
  * - resend_requested: true if referral_outreach_status == "Resend"
- * - selected_session_start_date, selected_session_end_date, selected_session_price:
- *   Only set when client_interest == "Selected" AND selectedBillingSessionId is provided
  *
  * Deal Integration (when client_interest == "Selected"):
  * - Checks for existing Selected referral on the deal (prevents duplicates)
  * - Reads Company.programid (legacy ID = PostgreSQL companies.access_id)
- * - Reads Program object name (for deal.programname)
+ * - Uses Company name as deal.programname (Program HubSpot object does not exist)
  * - Writes deal properties: program_id, programname, dealstage → "Tuition Undecided"
  * - This activates the Session Selection card for tuition entry
  *
@@ -84,22 +78,26 @@ interface CreateOrUpdateResult {
 // ============================================================================
 
 /**
- * Three-tier de-selection result
+ * Two-tier de-selection result (collapsed from earlier 3-tier model).
  *
- * When a referral's client_interest changes FROM "Selected" to something else,
- * the action depends on the deal's current state:
+ * In the active "Deal Pipeline", `decisionmakerboughtin` ("Program Selected")
+ * IS the closed-won state — there's no separate "Closed Won" stage to gate
+ * differently. The earlier Tier 3 hard-block check against `1282918770`
+ * (the historic-pipeline closed-won ID) never matched active deals.
  *
- *   Tier 1: Deal at "Tuition Undecided", no tuition entered
- *           → Allow freely. Reset program_id, programname, move to rollback stage.
- *   Tier 2: Deal at "Program Selected" (tuition entered, not closed)
- *           → Block de-selection.
- *   Tier 3: Deal at "Closed Won" or beyond
- *           → Hard block.
+ * When a referral's client_interest changes FROM "Selected" to something else:
+ *
+ *   reset: Deal at "Tuition Undecided", no tuition entered
+ *          → Allow. Reset program_id, programname, dealstage to Recommendation Presented.
+ *   block: Deal at "Program Selected" (tuition entered = won)
+ *          → Block de-selection.
+ *   noOp:  Any other stage (Recommendation Presented, Closed Lost, etc.)
+ *          → Allow. Update referral only; leave deal stage unchanged.
  */
 type DeSelectionResult =
-  | { tier: 1; action: 'reset'; rollbackStageId: string }
-  | { tier: 2; action: 'block'; message: string }
-  | { tier: 3; action: 'hardBlock'; message: string };
+  | { action: 'reset'; rollbackStageId: string }
+  | { action: 'block'; message: string }
+  | { action: 'noOp' };
 
 // ============================================================================
 // Internal Helper Functions
@@ -165,24 +163,6 @@ async function fetchCompanyProgramId(companyId: string): Promise<string | null> 
     return programId.trim();
   } catch (error: any) {
     console.error(`[workflow] Failed to fetch company programid for ${companyId}:`, error.message);
-    return null;
-  }
-}
-
-/**
- * Fetch Program object name for the programname deal property.
- * Falls back to company name if no Program object is associated.
- */
-async function fetchProgramName(programId: string): Promise<string | null> {
-  try {
-    const program = await hubspotClient.crm.objects.basicApi.getById(
-      config.objectTypes.program,
-      programId,
-      [config.properties.program.name]
-    );
-    return program.properties[config.properties.program.name] || null;
-  } catch (error: any) {
-    console.warn(`[workflow] Failed to fetch program name for ${programId}:`, error.message);
     return null;
   }
 }
@@ -281,39 +261,36 @@ async function resetDealForDeSelection(
 }
 
 /**
- * Determine de-selection tier based on deal state.
+ * Determine de-selection action based on deal state.
  */
 function determineDeSelectionTier(dealData: {
   dealstage?: string;
   tuitionAtEnrollment?: string;
 }): DeSelectionResult {
   const { dealstage, tuitionAtEnrollment } = dealData;
-  const hasTuition = tuitionAtEnrollment && parseFloat(tuitionAtEnrollment) > 0;
+  const hasTuition = !!tuitionAtEnrollment && parseFloat(tuitionAtEnrollment) > 0;
 
-  // Tier 3: Closed Won or beyond
-  if (dealstage === config.stages.closedWon) {
-    return {
-      tier: 3,
-      action: 'hardBlock',
-      message: 'This deal has been finalized. Contact admin to make changes.',
-    };
-  }
-
-  // Tier 2: Program Selected (tuition entered)
+  // Block: Program Selected (= Closed Won) with tuition entered
   if (dealstage === config.stages.programSelected && hasTuition) {
     return {
-      tier: 2,
       action: 'block',
       message: 'Tuition has been entered for this session. Clear the session selection on the Session Card tab first.',
     };
   }
 
-  // Tier 1: Tuition Undecided or earlier, no tuition
-  return {
-    tier: 1,
-    action: 'reset',
-    rollbackStageId: config.stages.recommendationPresented,
-  };
+  // Reset: Tuition Undecided — actively roll back to Recommendation Presented
+  if (dealstage === config.stages.tuitionUndecided) {
+    return {
+      action: 'reset',
+      rollbackStageId: config.stages.recommendationPresented,
+    };
+  }
+
+  // No-op: any other stage (Recommendation Presented, Closed Lost, etc.)
+  // Allow the referral edit but leave the deal stage unchanged. Previously
+  // the fall-through reset closed-lost deals back to Recommendation Presented,
+  // which silently re-opened them.
+  return { action: 'noOp' };
 }
 
 /**
@@ -346,35 +323,6 @@ async function fetchCompanyName(companyId: string): Promise<string | undefined> 
   } catch (error: any) {
     console.error(`[workflow] Failed to fetch company ${companyId}:`, error.message);
     return undefined;
-  }
-}
-
-/**
- * Fetch Session data for billing session fields
- */
-async function fetchSessionData(sessionId: string): Promise<{
-  startDate?: string;
-  endDate?: string;
-  price?: string;
-} | null> {
-  try {
-    const session = await hubspotClient.crm.objects.basicApi.getById(
-      config.objectTypes.session,
-      sessionId,
-      [
-        config.properties.session.startDate,
-        config.properties.session.endDate,
-        config.properties.session.price,
-      ]
-    );
-    return {
-      startDate: session.properties[config.properties.session.startDate] || undefined,
-      endDate: session.properties[config.properties.session.endDate] || undefined,
-      price: session.properties[config.properties.session.price] || undefined,
-    };
-  } catch (error: any) {
-    console.error(`[workflow] Failed to fetch session ${sessionId}:`, error.message);
-    return null;
   }
 }
 
@@ -523,10 +471,14 @@ async function createOrUpdateReferral(
  *
  * Supports:
  * - Deal ↔ Company (always created when referral is created)
- * - Multiple sessions (sessionIds array)
- * - Association labels:
+ *
+ * Association labels (string form — see PR for numeric type IDs):
  *   - "Recommendation" for Referral ↔ Company (default)
  *   - "Selected_Referral" for Referral ↔ Company when client_interest == "Selected"
+ *
+ * Program / Session associations are intentionally absent: those custom
+ * objects do not exist in portal 50530609. Sessions live in Postgres and
+ * are referenced by `Company.programid` instead.
  */
 function buildAssociationSpecs(
   referralId: string,
@@ -642,17 +594,13 @@ export async function createReferralWorkflow(
     }
   }
 
-  // Step 2: Fetch Deal and Company data in parallel
-  // Also fetch billing session data and company programid if marking Selected
-  const shouldFetchBillingSession =
-    isSelected && input.selectedBillingSessionId;
-
-  const [dealData, companyName, billingSessionData, companyProgramId] = await Promise.all([
+  // Step 2: Fetch Deal and Company data in parallel.
+  // Also fetch company.programid if marking Selected (mandatory for the
+  // session-card hand-off — programid maps to the Postgres companies.access_id
+  // used to look up sessions in the external session DB).
+  const [dealData, companyName, companyProgramId] = await Promise.all([
     fetchDealData(input.dealId),
     fetchCompanyName(input.companyId),
-    shouldFetchBillingSession
-      ? fetchSessionData(input.selectedBillingSessionId!)
-      : Promise.resolve(null),
     isSelected
       ? fetchCompanyProgramId(input.companyId)
       : Promise.resolve(null),
@@ -668,7 +616,7 @@ export async function createReferralWorkflow(
     };
   }
 
-  console.log(`[workflow] Fetched data - Deal owner: ${dealData.ownerId}, Company: ${companyName}, Session: ${billingSessionData ? 'yes' : 'no'}`);
+  console.log(`[workflow] Fetched data - Deal owner: ${dealData.ownerId}, Company: ${companyName}`);
 
   // Step 3: Build canonical payload with computed fields
   const payload = buildReferralPayload(input);
@@ -705,19 +653,10 @@ export async function createReferralWorkflow(
     ? 'true'
     : 'false';
 
-  // selected_session_* fields - only if client_interest == "Selected" AND billing session provided
-  if (isClientInterestSelected(input.clientInterest) && billingSessionData) {
-    if (billingSessionData.startDate) {
-      payload.properties[config.properties.referral.selectedSessionStartDate] = billingSessionData.startDate;
-    }
-    if (billingSessionData.endDate) {
-      payload.properties[config.properties.referral.selectedSessionEndDate] = billingSessionData.endDate;
-    }
-    if (billingSessionData.price) {
-      payload.properties[config.properties.referral.selectedSessionPrice] = billingSessionData.price;
-    }
-    console.log(`[workflow] Set selected session fields from billing session ${input.selectedBillingSessionId}`);
-  }
+  // selected_session_* fields are populated downstream by the unified app's
+  // session-selection flow (Postgres-backed, wired in Phase 3). They are no
+  // longer set here from a HubSpot Session object — that object type does not
+  // exist in this portal.
 
   // Step 4: Create or update referral
   let referralId: string;
@@ -757,10 +696,11 @@ export async function createReferralWorkflow(
   // Writes: program_id, programname, dealstage → "Program Selected - Tuition Undecided"
   let dealUpdated = false;
   if (isSelected && companyProgramId) {
-    // Get program name (prefer Program object name, fall back to company name)
-    const programName = input.programId
-      ? (await fetchProgramName(input.programId)) || companyName || 'Unknown Program'
-      : companyName || 'Unknown Program';
+    // Use the Company name as deal.programname. Earlier code fetched a
+    // separate Program custom-object name, but Program is not a HubSpot
+    // object in this portal; the camp's name on the Company record is the
+    // canonical display name.
+    const programName = companyName || 'Unknown Program';
 
     const dealUpdateResult = await updateDealForSelection(
       input.dealId,
@@ -837,7 +777,7 @@ export interface UpdateWorkflowResult {
 export async function updateReferralWorkflow(
   referralId: string,
   properties: Record<string, string>,
-  context?: { dealId?: string; companyId?: string; programId?: string; previousClientInterest?: string }
+  context?: { dealId?: string; companyId?: string; previousClientInterest?: string }
 ): Promise<UpdateWorkflowResult> {
   if (!referralId || !/^\d+$/.test(referralId)) {
     return {
@@ -881,10 +821,10 @@ export async function updateReferralWorkflow(
       };
     }
 
-    // Get program name
-    const programName = context.programId
-      ? (await fetchProgramName(context.programId)) || (await fetchCompanyName(context.companyId)) || 'Unknown Program'
-      : (await fetchCompanyName(context.companyId)) || 'Unknown Program';
+    // Use the Company name as deal.programname (Program HubSpot object does
+    // not exist in this portal — the camp name on the Company record is the
+    // canonical display name).
+    const programName = (await fetchCompanyName(context.companyId)) || 'Unknown Program';
 
     // Update the referral first
     try {
@@ -922,13 +862,6 @@ export async function updateReferralWorkflow(
     const dealData = await fetchDealData(context.dealId);
     const deSelectionResult = determineDeSelectionTier(dealData);
 
-    if (deSelectionResult.action === 'hardBlock') {
-      return {
-        success: false,
-        errors: [deSelectionResult.message],
-      };
-    }
-
     if (deSelectionResult.action === 'block') {
       return {
         success: false,
@@ -936,7 +869,7 @@ export async function updateReferralWorkflow(
       };
     }
 
-    // Tier 1: Allow de-selection + reset deal
+    // 'reset' or 'noOp': both update the referral first
     try {
       await hubspotClient.crm.objects.basicApi.update(
         config.objectTypes.referral,
@@ -948,6 +881,12 @@ export async function updateReferralWorkflow(
       return { success: false, errors: [`Failed to update referral: ${error.message}`] };
     }
 
+    if (deSelectionResult.action === 'noOp') {
+      console.log(`[workflow] De-selected referral ${referralId}, deal stage left unchanged (noOp)`);
+      return { success: true };
+    }
+
+    // 'reset': roll back the deal to Recommendation Presented
     const resetResult = await resetDealForDeSelection(
       context.dealId,
       deSelectionResult.rollbackStageId
@@ -959,7 +898,7 @@ export async function updateReferralWorkflow(
       console.warn(`[workflow] Referral de-selected but deal reset failed: ${resetResult.error}`);
     }
 
-    console.log(`[workflow] De-selected referral ${referralId}, deal ${context.dealId} reset (Tier 1)`);
+    console.log(`[workflow] De-selected referral ${referralId}, deal ${context.dealId} reset to Recommendation Presented`);
     return { success: true };
   }
 

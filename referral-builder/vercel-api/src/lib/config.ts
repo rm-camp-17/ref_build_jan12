@@ -15,9 +15,12 @@ export const config = {
   },
 
   // Custom object type identifiers
+  // Note: Program and Session are NOT HubSpot custom objects in portal 50530609.
+  // Sessions live in Postgres (camp-experts-session-card's external DB) and are
+  // looked up via Company.programid (= Postgres companies.access_id). Earlier
+  // drafts referenced p_program / p_session HubSpot object types — those were
+  // never created in this portal.
   objectTypes: {
-    program: process.env.HS_PROGRAM_OBJECT_TYPE || 'p_program',
-    session: process.env.HS_SESSION_OBJECT_TYPE || 'p_session',
     referral: process.env.HS_REFERRAL_OBJECT_TYPE || '2-55790899',
     household: process.env.HS_HOUSEHOLD_OBJECT_TYPE || '2-53610744',
     child: process.env.HS_CHILD_OBJECT_TYPE || '2-50911061',
@@ -71,24 +74,17 @@ export const config = {
       // Legacy ID used by Session Card for session lookup (maps to PostgreSQL companies.access_id)
       programId: process.env.HS_COMPANY_PROGRAM_ID_PROP || 'programid',
     },
-    program: {
-      name: process.env.HS_PROGRAM_NAME_PROP || 'name',
-    },
-    session: {
-      name: process.env.HS_SESSION_NAME_PROP || 'name',
-      startDate: process.env.HS_SESSION_START_PROP || 'start_date',
-      endDate: process.env.HS_SESSION_END_PROP || 'end_date',
-      price: process.env.HS_SESSION_PRICE_PROP || 'price',
-      weeks: process.env.HS_SESSION_WEEKS_PROP || 'weeks',
-    },
   },
 
   // Pipeline stage configuration
   // Stage IDs from the "Deal Pipeline" (pipeline ID: "default")
+  // Note: in the active pipeline, `decisionmakerboughtin` ("Program Selected")
+  // is the closed-won terminal state — `hs_is_closed_won` is true on those deals.
+  // The historic ID `1282918770` previously stored under `closedWon` belongs to
+  // the "Historic 2015-2025" pipeline and is not used by current code.
   stages: {
     tuitionUndecided: process.env.HS_STAGE_TUITION_UNDECIDED || '1282923123',
     programSelected: process.env.HS_STAGE_PROGRAM_SELECTED || 'decisionmakerboughtin',
-    closedWon: process.env.HS_STAGE_CLOSED_WON || '1282918770',
     // Tier 1 de-selection rollback target
     recommendationPresented: process.env.HS_STAGE_RECOMMENDATION_PRESENTED || 'presentationscheduled',
   },

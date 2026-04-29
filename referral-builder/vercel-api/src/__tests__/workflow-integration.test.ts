@@ -100,21 +100,6 @@ function mockCompanyFetch(programid: string | null = '1544', name: string = 'Cam
   });
 }
 
-// Helper to mock program fetch
-function mockProgramFetch(name: string = 'Summer Adventure') {
-  mockHubspot.crm.objects.basicApi.getById.mockImplementation(
-    (objectType: string, _id: string, _props: string[]) => {
-      if (objectType === 'p_program') {
-        return Promise.resolve({ properties: { name } });
-      }
-      // Session data
-      return Promise.resolve({
-        properties: { start_date: '2026-06-15', end_date: '2026-08-15', price: '5000' },
-      });
-    }
-  );
-}
-
 // Helper for referral search (findExistingReferral)
 function mockReferralSearch(existingId: string | null = null) {
   mockHubspot.crm.objects.searchApi.doSearch.mockResolvedValue({
@@ -132,10 +117,9 @@ beforeEach(() => {
 });
 
 describe('createReferralWorkflow — Selected integration', () => {
-  test('writes program_id, programname, dealstage to deal when interest is Selected', async () => {
+  test('writes program_id, programname (= company name), dealstage when interest is Selected', async () => {
     mockDealFetch();
     mockCompanyFetch('1544', 'Camp Sunshine');
-    mockProgramFetch('Summer Adventure');
     mockReferralSearch(null);
     mockReferralCreate('99901');
     mockHubspot.crm.deals.basicApi.update.mockResolvedValue({});
@@ -144,18 +128,19 @@ describe('createReferralWorkflow — Selected integration', () => {
     const result = await createReferralWorkflow({
       dealId: '100',
       companyId: '200',
-      programId: '300',
       clientInterest: 'Selected',
     });
 
     expect(result.success).toBe(true);
     expect(result.dealUpdated).toBe(true);
 
-    // Verify deal was updated with correct properties
+    // Verify deal was updated with correct properties.
+    // programname now uses Company.name directly — Program HubSpot object
+    // doesn't exist in this portal.
     expect(mockHubspot.crm.deals.basicApi.update).toHaveBeenCalledWith('100', {
       properties: {
         program_id: '1544',
-        programname: 'Summer Adventure',
+        programname: 'Camp Sunshine',
         dealstage: '1282923123',
       },
     });
@@ -201,20 +186,18 @@ describe('createReferralWorkflow — Selected integration', () => {
     expect(result.errors?.[0]).toContain('already marked Selected');
   });
 
-  test('falls back to company name when no Program object', async () => {
+  test('uses company name as programname (no Program HubSpot object exists)', async () => {
     mockDealFetch();
     mockCompanyFetch('1544', 'Camp Sunshine');
     mockReferralSearch(null);
     mockReferralCreate('99901');
     mockHubspot.crm.deals.basicApi.update.mockResolvedValue({});
     mockHubspot.crm.objects.batchApi.read.mockResolvedValue({ results: [] });
-    // No programId in input → no program name fetch → falls back to company name
 
     const result = await createReferralWorkflow({
       dealId: '100',
       companyId: '200',
       clientInterest: 'Selected',
-      // programId intentionally omitted
     });
 
     expect(result.success).toBe(true);
@@ -228,7 +211,6 @@ describe('createReferralWorkflow — Selected integration', () => {
   test('returns error when deal PATCH fails', async () => {
     mockDealFetch();
     mockCompanyFetch('1544', 'Camp Sunshine');
-    mockProgramFetch('Summer Adventure');
     mockReferralSearch(null);
     mockReferralCreate('99901');
     mockHubspot.crm.objects.batchApi.read.mockResolvedValue({ results: [] });
@@ -239,7 +221,6 @@ describe('createReferralWorkflow — Selected integration', () => {
     const result = await createReferralWorkflow({
       dealId: '100',
       companyId: '200',
-      programId: '300',
       clientInterest: 'Selected',
     });
 
@@ -266,7 +247,7 @@ describe('createReferralWorkflow — Selected integration', () => {
 });
 
 describe('updateReferralWorkflow — de-selection tiers', () => {
-  test('Tier 1: allows de-selection and resets deal when no tuition entered', async () => {
+  test('reset: allows de-selection and resets deal when at Tuition Undecided with no tuition', async () => {
     mockDealFetch({ dealstage: '1282923123', tuition_at_enrollment: '' });
     mockHubspot.crm.objects.basicApi.update.mockResolvedValue({});
     mockHubspot.crm.deals.basicApi.update.mockResolvedValue({});
@@ -292,7 +273,7 @@ describe('updateReferralWorkflow — de-selection tiers', () => {
     });
   });
 
-  test('Tier 2: blocks de-selection when tuition has been entered', async () => {
+  test('block: blocks de-selection when tuition has been entered (Won)', async () => {
     mockDealFetch({
       dealstage: 'decisionmakerboughtin',
       tuition_at_enrollment: '5000',
@@ -313,11 +294,12 @@ describe('updateReferralWorkflow — de-selection tiers', () => {
     expect(mockHubspot.crm.objects.basicApi.update).not.toHaveBeenCalled();
   });
 
-  test('Tier 3: hard blocks de-selection when deal is Closed Won', async () => {
-    mockDealFetch({
-      dealstage: '1282918770',
-      tuition_at_enrollment: '5000',
-    });
+  test('noOp: allows de-selection on Closed Lost deal without resetting deal stage', async () => {
+    // Previously this fell through to a "reset" that silently re-opened
+    // closed-lost deals back to Recommendation Presented. Now the action is
+    // noOp: update the referral, leave the deal stage alone.
+    mockDealFetch({ dealstage: 'closedlost', tuition_at_enrollment: '' });
+    mockHubspot.crm.objects.basicApi.update.mockResolvedValue({});
 
     const result = await updateReferralWorkflow(
       '99901',
@@ -328,9 +310,15 @@ describe('updateReferralWorkflow — de-selection tiers', () => {
       }
     );
 
-    expect(result.success).toBe(false);
-    expect(result.errors?.[0]).toContain('finalized');
-    expect(mockHubspot.crm.objects.basicApi.update).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    // Referral updated
+    expect(mockHubspot.crm.objects.basicApi.update).toHaveBeenCalledWith(
+      '2-55790899',
+      '99901',
+      { properties: { referral_client_interest: 'Declined' } }
+    );
+    // Deal stage NOT touched
+    expect(mockHubspot.crm.deals.basicApi.update).not.toHaveBeenCalled();
   });
 
   test('standard update (no selection transition) works without context', async () => {

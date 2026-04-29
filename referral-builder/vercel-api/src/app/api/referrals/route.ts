@@ -13,10 +13,6 @@
  * {
  *   dealId: string (required)
  *   companyId: string (required)
- *   programId?: string
- *   sessionId?: string                // Single session (backwards compatible)
- *   sessionIds?: string[]             // Multiple sessions support
- *   selectedBillingSessionId?: string // Billing session when clientInterest == "Selected"
  *   note?: string                     // referral_note_to_company
  *   outreachStatus?: string           // e.g., "Ready to Send", "Sent", "Resend"
  *   clientInterest?: string           // e.g., "Active / considering", "Selected"
@@ -28,8 +24,6 @@
  * Computed fields set on referral:
  * - hubspot_owner_id: from Deal.hubspot_owner_id
  * - resend_requested: true if outreachStatus == "Resend"
- * - selected_session_start_date, selected_session_end_date, selected_session_price:
- *   Only set when clientInterest == "Selected" AND selectedBillingSessionId provided
  *
  * Note: company_name is calculated by HubSpot from the associated Company.
  * Note: If any properties are read-only in HubSpot, they are automatically skipped.
@@ -127,8 +121,6 @@ export async function POST(req: NextRequest) {
   console.log('[POST /api/referrals] Request received:', {
     dealId: (body as any)?.dealId,
     companyId: (body as any)?.companyId,
-    programId: (body as any)?.programId,
-    sessionId: (body as any)?.sessionId,
     hasNote: !!(body as any)?.note,
     outreachStatus: (body as any)?.outreachStatus,
     clientInterest: (body as any)?.clientInterest,

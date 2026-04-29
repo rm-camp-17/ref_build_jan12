@@ -12,10 +12,6 @@ import { config } from './config';
 export interface CreateReferralInput {
   dealId: string;
   companyId: string;
-  programId?: string;
-  sessionId?: string;           // Single session for backwards compatibility
-  sessionIds?: string[];        // Multiple sessions support
-  selectedBillingSessionId?: string; // The session to use for billing (when clientInterest == "Selected")
   note?: string;
   outreachStatus?: string;
   clientInterest?: string;
@@ -85,46 +81,6 @@ export function validateCreateReferralInput(
     errors.push('companyId is required and must be a valid HubSpot ID');
   }
 
-  // Optional ID fields (must be valid if provided)
-  if (data.programId !== undefined && data.programId !== null && data.programId !== '') {
-    if (!isValidObjectId(data.programId)) {
-      errors.push('programId must be a valid HubSpot ID if provided');
-    }
-  }
-
-  // Support both single sessionId and sessionIds array
-  if (data.sessionId !== undefined && data.sessionId !== null && data.sessionId !== '') {
-    if (!isValidObjectId(data.sessionId)) {
-      errors.push('sessionId must be a valid HubSpot ID if provided');
-    }
-  }
-
-  // Validate sessionIds array if provided
-  let sessionIds: string[] = [];
-  if (Array.isArray(data.sessionIds)) {
-    for (const sid of data.sessionIds) {
-      if (sid && !isValidObjectId(sid)) {
-        errors.push(`sessionIds contains invalid HubSpot ID: ${sid}`);
-      } else if (sid) {
-        sessionIds.push(String(sid).trim());
-      }
-    }
-  }
-  // If single sessionId provided but not in sessionIds, add it
-  if (data.sessionId && isValidObjectId(data.sessionId)) {
-    const singleId = String(data.sessionId).trim();
-    if (!sessionIds.includes(singleId)) {
-      sessionIds.push(singleId);
-    }
-  }
-
-  // Validate selectedBillingSessionId if provided
-  if (data.selectedBillingSessionId !== undefined && data.selectedBillingSessionId !== null && data.selectedBillingSessionId !== '') {
-    if (!isValidObjectId(data.selectedBillingSessionId)) {
-      errors.push('selectedBillingSessionId must be a valid HubSpot ID if provided');
-    }
-  }
-
   // Validate copied fields - copiedFromYear only valid if copiedFromDealKey is set
   let copiedFromDealKey: string | undefined;
   let copiedFromYear: number | undefined;
@@ -156,10 +112,6 @@ export function validateCreateReferralInput(
   const validatedInput: CreateReferralInput = {
     dealId: String(data.dealId).trim(),
     companyId: String(data.companyId).trim(),
-    programId: data.programId ? String(data.programId).trim() : undefined,
-    sessionId: data.sessionId ? String(data.sessionId).trim() : undefined,
-    sessionIds: sessionIds.length > 0 ? sessionIds : undefined,
-    selectedBillingSessionId: data.selectedBillingSessionId ? String(data.selectedBillingSessionId).trim() : undefined,
     note: note || undefined,
     outreachStatus: data.outreachStatus ? String(data.outreachStatus) : undefined,
     clientInterest: data.clientInterest ? String(data.clientInterest) : undefined,
@@ -180,8 +132,8 @@ export function validateCreateReferralInput(
  * Uses internal property names and applies defaults
  *
  * NOTE: This builds the base properties. Additional computed properties
- * (company_name, hubspot_owner_id, resend_requested, selected_session_*)
- * are added by the workflow after fetching related data.
+ * (company_name, hubspot_owner_id, resend_requested) are added by the
+ * workflow after fetching related data.
  */
 export function buildReferralPayload(input: CreateReferralInput): ReferralPayload {
   const referralKey = `${input.dealId}-${input.companyId}`;
