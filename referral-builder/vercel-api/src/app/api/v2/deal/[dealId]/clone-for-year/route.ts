@@ -36,6 +36,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { cloneForYear } from '@/lib/clone';
+import {
+  requireDealAuthorization,
+  DealAuthorizationError,
+} from '@/lib/require-deal-authorization';
 
 export async function POST(
   req: NextRequest,
@@ -43,14 +47,30 @@ export async function POST(
 ) {
   const { dealId } = params;
 
+  const rawBody = await req.text();
   let body: { targetYear?: unknown; confirmExpertFields?: unknown };
   try {
-    body = await req.json();
+    body = rawBody ? JSON.parse(rawBody) : {};
   } catch {
     return NextResponse.json(
       { success: false, message: 'Invalid JSON in request body.' },
       { status: 400 }
     );
+  }
+
+  // Authorization (spec §6.1). Note: we deliberately do NOT call
+  // `requireUnlocked` here. clone-for-year has its own in-lib lock
+  // pre-flight (§5.2 step 0) that returns `requiresConfirmation` so the
+  // rep can acknowledge the locked source before proceeding. A blanket
+  // 409 from the middleware would short-circuit that UX flow and ship
+  // the wrong error shape to the card.
+  try {
+    await requireDealAuthorization(req, dealId, rawBody);
+  } catch (err) {
+    if (err instanceof DealAuthorizationError) {
+      return NextResponse.json(err.body, { status: err.statusCode });
+    }
+    throw err;
   }
 
   const targetYear =

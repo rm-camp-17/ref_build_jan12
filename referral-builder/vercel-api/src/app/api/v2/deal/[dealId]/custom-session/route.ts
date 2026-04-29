@@ -16,6 +16,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { selectCustomSession } from '@/lib/deal-updater';
+import {
+  requireUnlocked,
+  RequireUnlockedError,
+} from '@/lib/require-unlocked';
+import {
+  requireDealAuthorization,
+  DealAuthorizationError,
+} from '@/lib/require-deal-authorization';
 
 export async function POST(
   req: NextRequest,
@@ -23,6 +31,7 @@ export async function POST(
 ) {
   const { dealId } = params;
 
+  const rawBody = await req.text();
   let body: {
     description?: string;
     tuition?: unknown;
@@ -30,12 +39,27 @@ export async function POST(
     weeks?: unknown;
   };
   try {
-    body = await req.json();
+    body = rawBody ? JSON.parse(rawBody) : {};
   } catch {
     return NextResponse.json(
       { success: false, message: 'Invalid JSON in request body.' },
       { status: 400 }
     );
+  }
+
+  // Authorization + commission_locked enforcement (spec §5.1, §6.1)
+  try {
+    await requireDealAuthorization(req, dealId, rawBody);
+    // custom-session writes tuition_at_enrollment + lengthofstay (sacred)
+    await requireUnlocked(dealId, ['tuition_at_enrollment', 'lengthofstay']);
+  } catch (err) {
+    if (err instanceof DealAuthorizationError) {
+      return NextResponse.json(err.body, { status: err.statusCode });
+    }
+    if (err instanceof RequireUnlockedError) {
+      return NextResponse.json(err.body, { status: err.statusCode });
+    }
+    throw err;
   }
 
   const tuition = parseFloat(String(body?.tuition));

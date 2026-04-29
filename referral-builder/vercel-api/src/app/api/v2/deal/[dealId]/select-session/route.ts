@@ -18,6 +18,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { selectSession } from '@/lib/deal-updater';
+import {
+  requireUnlocked,
+  RequireUnlockedError,
+} from '@/lib/require-unlocked';
+import {
+  requireDealAuthorization,
+  DealAuthorizationError,
+} from '@/lib/require-deal-authorization';
 
 export async function POST(
   req: NextRequest,
@@ -25,14 +33,33 @@ export async function POST(
 ) {
   const { dealId } = params;
 
+  // Read raw body once so we can both verify HubSpot's HMAC and parse it
+  // as JSON. NextRequest doesn't let us re-read req.json() after we've
+  // pulled the text out, so do this in one pass.
+  const rawBody = await req.text();
   let body: { sessionId?: string | number; programId?: string };
   try {
-    body = await req.json();
+    body = rawBody ? JSON.parse(rawBody) : {};
   } catch {
     return NextResponse.json(
       { success: false, message: 'Invalid JSON in request body.' },
       { status: 400 }
     );
+  }
+
+  // Authorization + commission_locked enforcement (spec §5.1, §6.1)
+  try {
+    await requireDealAuthorization(req, dealId, rawBody);
+    // select-session writes tuition_at_enrollment + lengthofstay (sacred)
+    await requireUnlocked(dealId, ['tuition_at_enrollment', 'lengthofstay']);
+  } catch (err) {
+    if (err instanceof DealAuthorizationError) {
+      return NextResponse.json(err.body, { status: err.statusCode });
+    }
+    if (err instanceof RequireUnlockedError) {
+      return NextResponse.json(err.body, { status: err.statusCode });
+    }
+    throw err;
   }
 
   const sessionId = body?.sessionId;

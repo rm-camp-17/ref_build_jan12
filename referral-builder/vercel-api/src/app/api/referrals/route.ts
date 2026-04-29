@@ -44,6 +44,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createReferralWorkflow } from '@/lib/workflow';
+import {
+  requireUnlocked,
+  RequireUnlockedError,
+} from '@/lib/require-unlocked';
+import {
+  requireDealAuthorization,
+  DealAuthorizationError,
+} from '@/lib/require-deal-authorization';
 
 // ============================================================================
 // Request Handling Utilities
@@ -98,22 +106,19 @@ export async function POST(req: NextRequest) {
     userAgent: req.headers.get('user-agent'),
   });
 
-  // Parse request body
+  // Read raw body once so we can both verify HubSpot's HMAC signature
+  // and parse it as JSON (NextRequest body can only be consumed once).
+  let rawBody = '';
   try {
-    body = await req.json();
+    rawBody = await req.text();
+    body = rawBody ? JSON.parse(rawBody) : {};
     console.log('[POST /api/referrals] Body parsed successfully, type:', typeof body);
   } catch (error: any) {
     console.error('[POST /api/referrals] JSON parse failed:', error.message);
-
-    // Try to read raw body for debugging
-    try {
-      const clone = req.clone();
-      const text = await clone.text();
-      console.log('[POST /api/referrals] Raw body:', text.substring(0, 200));
-    } catch (e) {
-      console.error('[POST /api/referrals] Could not read raw body');
-    }
-
+    console.log(
+      '[POST /api/referrals] Raw body:',
+      rawBody.substring(0, 200)
+    );
     return errorResponse('Invalid JSON in request body', 400);
   }
 
@@ -126,6 +131,29 @@ export async function POST(req: NextRequest) {
     clientInterest: (body as any)?.clientInterest,
     associateDealToCompany: (body as any)?.associateDealToCompany,
   });
+
+  // Authorization + commission_locked enforcement (spec §5.1, §6.1).
+  //
+  // /api/referrals doesn't have dealId in the path; it lives in the body.
+  // Pull it through to both helpers. We pass [] as mutatingFields because
+  // creating a referral row never writes any of the deal's sacred fields
+  // — referral creation is a non-sacred mutation that should pass through
+  // even on a locked deal. requireUnlocked short-circuits on empty fields.
+  const dealIdFromBody = String((body as any)?.dealId ?? '');
+  if (dealIdFromBody) {
+    try {
+      await requireDealAuthorization(req, dealIdFromBody, rawBody);
+      await requireUnlocked(dealIdFromBody, []);
+    } catch (err) {
+      if (err instanceof DealAuthorizationError) {
+        return NextResponse.json(err.body, { status: err.statusCode });
+      }
+      if (err instanceof RequireUnlockedError) {
+        return NextResponse.json(err.body, { status: err.statusCode });
+      }
+      throw err;
+    }
+  }
 
   try {
     // Execute workflow
