@@ -169,11 +169,14 @@ function LostCaptureForm({
       if (showWaitYear && waitYear) {
         body.wait_until_year = parseInt(waitYear, 10);
       }
+      // hubspot.fetch only allows the Authorization header. Setting
+      // Content-Type causes HubSpot to reject the call with HTTP 400 before
+      // it leaves the iframe. The backend reads req.text() and JSON.parses
+      // it directly, so no Content-Type is needed.
       const resp = await hubspot.fetch(
         `${API_BASE}/api/deals/${dealId}/loss-reason`,
         {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         }
       );

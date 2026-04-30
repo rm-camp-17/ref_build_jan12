@@ -72,11 +72,12 @@ export function SessionPickerView({
     try {
       setSubmitting(true);
       setError(null);
+      // hubspot.fetch only allows the Authorization header — Content-Type
+      // is rejected with HTTP 400 before the call leaves the iframe.
       const resp = await hubspot.fetch(
         `${API_BASE}/api/v2/deal/${dealId}/select-session`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             sessionId: selectedSessionId,
             programId: cardData.programId,
@@ -188,7 +189,6 @@ function CustomSessionForm({
         `${API_BASE}/api/v2/deal/${dealId}/custom-session`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             description: description || "Custom session",
             tuition: parseFloat(tuition),
