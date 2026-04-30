@@ -272,11 +272,12 @@ export function WinReasonCapture({
     setSuccess(false);
     setSaving(true);
     try {
+      // hubspot.fetch only allows the Authorization header — Content-Type
+      // is rejected with HTTP 400 before the call leaves the iframe.
       const resp = await hubspot.fetch(
         `${API_BASE}/api/deals/${dealId}/win-reason`,
         {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             closed_won_category: category,
             closed_won_reason: reason,
@@ -390,7 +391,6 @@ function CloneForYearSection({
           `${API_BASE}/api/v2/deal/${dealId}/clone-for-year`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               targetYear: parseInt(targetYear, 10),
               confirmExpertFields,

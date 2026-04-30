@@ -246,9 +246,17 @@ export function ReferralTableView({
       init?: { method?: string; body?: any }
     ): Promise<any> => {
       const url = `${API_BASE}${path}`;
+      // hubspot.fetch only allows the Authorization header. Don't set
+      // Content-Type — HubSpot rejects with HTTP 400 before the call leaves
+      // the iframe. Bodies must be strings; stringify objects defensively.
+      const rawBody = init?.body;
+      const body =
+        rawBody === undefined || typeof rawBody === "string"
+          ? rawBody
+          : JSON.stringify(rawBody);
       const res = await hubspot.fetch(url, {
         method: init?.method || "GET",
-        body: init?.body || undefined,
+        body,
       });
 
       let data: any = null;
