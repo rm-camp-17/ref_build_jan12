@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { updateReferralWorkflow } from '@/lib/workflow';
 import { validateUpdateReferralInput } from '@/lib/validation';
+import { parseRequestBody } from '@/lib/parse-request-body';
 import {
   requireUnlocked,
   RequireUnlockedError,
@@ -53,7 +54,7 @@ export async function PATCH(
   let body: any;
   try {
     rawBody = await req.text();
-    body = rawBody ? JSON.parse(rawBody) : {};
+    body = parseRequestBody(rawBody);
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: 'Invalid JSON in request body' },

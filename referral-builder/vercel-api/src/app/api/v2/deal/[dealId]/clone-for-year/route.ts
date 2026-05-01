@@ -36,6 +36,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { cloneForYear } from '@/lib/clone';
+import { parseRequestBody } from '@/lib/parse-request-body';
 import {
   requireDealAuthorization,
   DealAuthorizationError,
@@ -50,7 +51,7 @@ export async function POST(
   const rawBody = await req.text();
   let body: { targetYear?: unknown; confirmExpertFields?: unknown };
   try {
-    body = rawBody ? JSON.parse(rawBody) : {};
+    body = parseRequestBody(rawBody) as typeof body;
   } catch {
     return NextResponse.json(
       { success: false, message: 'Invalid JSON in request body.' },

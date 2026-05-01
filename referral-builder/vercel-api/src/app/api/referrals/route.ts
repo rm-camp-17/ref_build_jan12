@@ -44,6 +44,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createReferralWorkflow } from '@/lib/workflow';
+import { parseRequestBody } from '@/lib/parse-request-body';
 import {
   requireUnlocked,
   RequireUnlockedError,
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
   let rawBody = '';
   try {
     rawBody = await req.text();
-    body = rawBody ? JSON.parse(rawBody) : {};
+    body = parseRequestBody(rawBody);
     console.log('[POST /api/referrals] Body parsed successfully, type:', typeof body);
   } catch (error: any) {
     console.error('[POST /api/referrals] JSON parse failed:', error.message);
