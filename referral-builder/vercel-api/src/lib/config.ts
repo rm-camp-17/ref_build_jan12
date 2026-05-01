@@ -86,6 +86,17 @@ export const config = {
       status: process.env.HS_COMPANY_STATUS_PROP || 'partner_status',
       // Legacy ID used by Session Card for session lookup (maps to PostgreSQL companies.access_id)
       programId: process.env.HS_COMPANY_PROGRAM_ID_PROP || 'programid',
+      // Drives renewal-spawn eligibility — see RENEWAL_ELIGIBLE_LOGIC_TYPES.
+      // Mapped from HubSpot label → internal value in
+      // ce-billing/src/services/sync/hubspot-pull.ts:41-50.
+      commissionLogicType: process.env.HS_COMPANY_COMMISSION_LOGIC_PROP || 'commission_logic_type',
+    },
+    child: {
+      // ASSUMPTION: HubSpot internal name of the "Year (Client Year - Access)"
+      // Number property on the Children custom object (2-50911061). Verify by
+      // visiting Settings → Properties → Children and reading the property's
+      // internal name. Override via HS_CHILD_YEAR_PROP if it differs.
+      year: process.env.HS_CHILD_YEAR_PROP || 'year',
     },
   },
 
@@ -96,10 +107,18 @@ export const config = {
   // The historic ID `1282918770` previously stored under `closedWon` belongs to
   // the "Historic 2015-2025" pipeline and is not used by current code.
   stages: {
+    newLead: process.env.HS_STAGE_NEW_LEAD || 'appointmentscheduled',
+    introCallCompleted: process.env.HS_STAGE_INTRO_CALL || 'qualifiedtobuy',
+    recommendationPresented: process.env.HS_STAGE_RECOMMENDATION_PRESENTED || 'presentationscheduled',
     tuitionUndecided: process.env.HS_STAGE_TUITION_UNDECIDED || '1282923123',
     programSelected: process.env.HS_STAGE_PROGRAM_SELECTED || 'decisionmakerboughtin',
-    // Tier 1 de-selection rollback target
-    recommendationPresented: process.env.HS_STAGE_RECOMMENDATION_PRESENTED || 'presentationscheduled',
+    closedLost: process.env.HS_STAGE_CLOSED_LOST || 'closedlost',
+  },
+
+  // Active pipeline ID — excludes "Historic 2015-2025" deals from
+  // Child.Year mirror + renewal spawn.
+  pipeline: {
+    active: process.env.HS_ACTIVE_PIPELINE || 'default',
   },
 
   // Default enum values (internal values, not labels)
@@ -128,6 +147,49 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
     errors,
   };
 }
+
+// ============================================================================
+// Derived sets
+// ============================================================================
+
+/**
+ * Stages that count as "actively engaged" for the Child.Year mirror.
+ * New Lead and Closed Lost are intentionally excluded — the spec is that
+ * speculative renewal deals (parked at New Lead) don't pollute Child.Year
+ * until a parent actually engages, and lost deals shouldn't drag the year
+ * forward either.
+ */
+export const ACTIVE_DEAL_STAGES: ReadonlySet<string> = new Set([
+  config.stages.introCallCompleted,
+  config.stages.recommendationPresented,
+  config.stages.tuitionUndecided,
+  config.stages.programSelected,
+]);
+
+/**
+ * Company commission_logic_type values for which we auto-spawn a next-year
+ * renewal deal when the current-year deal hits Program Selected.
+ *
+ * Source of truth for the mapping HubSpot label → internal value:
+ *   ce-billing/src/services/sync/hubspot-pull.ts:41-50
+ *
+ * Eligible (camp pays Camp Experts in subsequent years):
+ *   - yearly             (every year)
+ *   - second_year        (year 2+ only)
+ *   - third_year         (year 3+ only)
+ *   - tfs                (per-week recurring)
+ *   - full_summer_delta  (delta from full-summer enrollment)
+ *
+ * Not eligible (one-shot or rookie-burned):
+ *   - one_time_only, fixed_fee, rookie_oto, rookie_tfs
+ */
+export const RENEWAL_ELIGIBLE_LOGIC_TYPES: ReadonlySet<string> = new Set([
+  'yearly',
+  'second_year',
+  'third_year',
+  'tfs',
+  'full_summer_delta',
+]);
 
 // ============================================================================
 // Type Exports
