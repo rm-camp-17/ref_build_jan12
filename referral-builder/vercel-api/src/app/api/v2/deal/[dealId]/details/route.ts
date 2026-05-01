@@ -37,6 +37,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDeal } from '@/lib/deals';
 import { getAssociatedIds } from '@/lib/associations';
+import { hubspotClient } from '@/lib/hubspot';
+import { config } from '@/lib/config';
 
 export async function GET(
   _req: NextRequest,
@@ -60,13 +62,37 @@ export async function GET(
       );
     }
 
-    // Parent-contact count drives SetupView's checklist. Done server-side
-    // because hubspot.fetch from the iframe can't authenticate to HubSpot's
-    // own API — it stamps a JWT meant for our backend, not for hubapi.com.
-    const contactIds = await getAssociatedIds('deals', dealId, 'contacts');
+    // Association lookups for SetupView checklist + ReferralTableView's
+    // dealCompanies list. Done server-side because hubspot.fetch from the
+    // iframe can't authenticate to HubSpot's own API — it stamps a JWT
+    // meant for our backend, not for hubapi.com.
+    const [contactIds, childIds, companyIds] = await Promise.all([
+      getAssociatedIds('deals', dealId, 'contacts'),
+      getAssociatedIds('deals', dealId, config.objectTypes.child),
+      getAssociatedIds('deals', dealId, 'companies'),
+    ]);
+
+    // Resolve company names so ReferralTableView can render them in the
+    // "Existing Referrals" badge + auto-select if there's only one.
+    let associated_companies: Array<{ id: string; name: string | null }> = [];
+    if (companyIds.length > 0) {
+      const companies = await Promise.all(
+        companyIds.map(async (id) => {
+          try {
+            const c = await hubspotClient.crm.companies.basicApi.getById(id, ['name']);
+            return { id, name: c.properties?.name ?? null };
+          } catch {
+            return { id, name: null };
+          }
+        })
+      );
+      associated_companies = companies;
+    }
 
     return NextResponse.json({
       parent_contact_count: contactIds.length,
+      associated_child_count: childIds.length,
+      associated_companies,
       id: deal.id,
       dealname: deal.dealname,
       year1: deal.year1,
