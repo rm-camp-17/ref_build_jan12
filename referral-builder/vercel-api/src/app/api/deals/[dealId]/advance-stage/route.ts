@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { updateDeal } from '@/lib/deals';
+import { parseRequestBody } from '@/lib/parse-request-body';
 import {
   requireUnlocked,
   RequireUnlockedError,
@@ -44,7 +45,7 @@ export async function POST(
   const rawBody = await req.text();
   let body: { toStage?: string };
   try {
-    body = rawBody ? JSON.parse(rawBody) : {};
+    body = parseRequestBody(rawBody) as typeof body;
   } catch {
     return NextResponse.json(
       { success: false, message: 'Invalid JSON in request body.' },

@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { selectCustomSession } from '@/lib/deal-updater';
+import { parseRequestBody } from '@/lib/parse-request-body';
 import {
   requireUnlocked,
   RequireUnlockedError,
@@ -39,7 +40,7 @@ export async function POST(
     weeks?: unknown;
   };
   try {
-    body = rawBody ? JSON.parse(rawBody) : {};
+    body = parseRequestBody(rawBody) as typeof body;
   } catch {
     return NextResponse.json(
       { success: false, message: 'Invalid JSON in request body.' },
