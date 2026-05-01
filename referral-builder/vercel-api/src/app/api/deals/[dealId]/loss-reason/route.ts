@@ -76,7 +76,7 @@ export async function PATCH(
     setStageToLost?: unknown;
   };
   try {
-    body = parseRequestBody(rawBody);
+    body = parseRequestBody(rawBody) as typeof body;
   } catch {
     return NextResponse.json(
       { success: false, message: 'Invalid JSON in request body.' },
