@@ -45,9 +45,12 @@ export function SetupView({
 }: Props) {
   const locked = isCommissionLocked(details);
 
-  const child = !!(
-    details?.associated_child_id && details.associated_child_id.trim() !== ""
-  );
+  // Counts come from server-side association lookups in /details — the
+  // legacy `associated_child_id` / `associated_household_id` Deal properties
+  // don't auto-populate when a rep creates the association via HubSpot's
+  // right-rail UI, so checking the count of actual associations is the
+  // honest signal.
+  const child = (details?.associated_child_count ?? 0) > 0;
   const household = !!(
     details?.associated_household_id &&
     details.associated_household_id.trim() !== ""

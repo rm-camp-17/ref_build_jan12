@@ -288,57 +288,26 @@ export function ReferralTableView({
     []
   );
 
-  const hubspotCrmRequest = useCallback(async (path: string): Promise<any> => {
-    const url = `https://api.hubapi.com${path}`;
-    const res = await hubspot.fetch(url);
-    if (!res.ok) {
-      let errorMsg = `HubSpot API error (${res.status})`;
-      try {
-        const errorData = await res.json();
-        errorMsg = errorData?.message || errorMsg;
-      } catch {
-        // Ignore
-      }
-      throw new Error(errorMsg);
-    }
-    return res.json();
-  }, []);
-
   // ==========================================================================
   // Loaders
   // ==========================================================================
 
+  // hubspot.fetch from the iframe can't authenticate to api.hubapi.com — it
+  // stamps a JWT meant for our backend. Deal→Company associations are
+  // resolved server-side and returned in details.associated_companies.
   const loadDealCompanies = useCallback(async () => {
     if (!dealId) return;
-    try {
-      const data = await hubspotCrmRequest(
-        `/crm/v4/objects/deals/${dealId}?associations=companies`
-      );
-      const companies: DealCompany[] = [];
-      if (data?.associations?.companies?.results) {
-        for (const assoc of data.associations.companies.results) {
-          try {
-            const companyData = await hubspotCrmRequest(
-              `/crm/v3/objects/companies/${assoc.toObjectId}?properties=name`
-            );
-            companies.push({
-              id: assoc.toObjectId,
-              name:
-                companyData?.properties?.name || `Company ${assoc.toObjectId}`,
-            });
-          } catch {
-            companies.push({ id: assoc.toObjectId });
-          }
-        }
-      }
-      setDealCompanies(companies);
-      if (companies.length === 1 && !selectedCompanyId) {
-        setSelectedCompanyId(companies[0].id);
-      }
-    } catch (e: any) {
-      console.error("Failed to load deal companies:", e.message);
+    const companies: DealCompany[] = (details?.associated_companies ?? []).map(
+      (c) => ({
+        id: c.id,
+        name: c.name ?? undefined,
+      })
+    );
+    setDealCompanies(companies);
+    if (companies.length === 1 && !selectedCompanyId) {
+      setSelectedCompanyId(companies[0].id);
     }
-  }, [dealId, selectedCompanyId, hubspotCrmRequest]);
+  }, [dealId, selectedCompanyId, details]);
 
   const loadPropertyDefinitions = useCallback(async () => {
     try {
