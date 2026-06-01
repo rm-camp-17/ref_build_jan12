@@ -66,9 +66,10 @@ export async function GET(
     // dealCompanies list. Done server-side because hubspot.fetch from the
     // iframe can't authenticate to HubSpot's own API — it stamps a JWT
     // meant for our backend, not for hubapi.com.
-    const [contactIds, childIds, companyIds] = await Promise.all([
+    const [contactIds, childIds, householdIds, companyIds] = await Promise.all([
       getAssociatedIds('deals', dealId, 'contacts'),
       getAssociatedIds('deals', dealId, config.objectTypes.child),
+      getAssociatedIds('deals', dealId, config.objectTypes.household),
       getAssociatedIds('deals', dealId, 'companies'),
     ]);
 
@@ -92,6 +93,7 @@ export async function GET(
     return NextResponse.json({
       parent_contact_count: contactIds.length,
       associated_child_count: childIds.length,
+      associated_household_count: householdIds.length,
       associated_companies,
       id: deal.id,
       dealname: deal.dealname,

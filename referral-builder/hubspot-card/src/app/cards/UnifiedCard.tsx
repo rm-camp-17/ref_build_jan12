@@ -227,8 +227,10 @@ function UnifiedCard({ context, actions }: UnifiedCardProps) {
     return (
       <Flex direction="column" gap="sm">
         <StageHeader
+          dealId={dealId}
           details={details}
           stageLabel={labelForStage(details?.dealstage)}
+          onChanged={fetchAll}
         />
         <CommissionLockedBanner details={details} />
         <LostView
@@ -251,7 +253,12 @@ function UnifiedCard({ context, actions }: UnifiedCardProps) {
   if (details?.dealstage === STAGES.closedLost) {
     return (
       <Flex direction="column" gap="sm">
-        <StageHeader details={details} stageLabel={labelForStage(details.dealstage)} />
+        <StageHeader
+          dealId={dealId}
+          details={details}
+          stageLabel={labelForStage(details.dealstage)}
+          onChanged={fetchAll}
+        />
         <CommissionLockedBanner details={details} />
         <LostView
           dealId={dealId}
@@ -268,8 +275,10 @@ function UnifiedCard({ context, actions }: UnifiedCardProps) {
     return (
       <Flex direction="column" gap="sm">
         <StageHeader
+          dealId={dealId}
           details={details}
           stageLabel={labelForStage(details?.dealstage || STAGES.tuitionUndecided)}
+          onChanged={fetchAll}
         />
         <CommissionLockedBanner details={details} />
         <SessionPickerView
@@ -288,8 +297,10 @@ function UnifiedCard({ context, actions }: UnifiedCardProps) {
     return (
       <Flex direction="column" gap="sm">
         <StageHeader
+          dealId={dealId}
           details={details}
           stageLabel={labelForStage(details?.dealstage || STAGES.programSelected)}
+          onChanged={fetchAll}
         />
         <CommissionLockedBanner details={details} />
         <WonView
@@ -311,7 +322,12 @@ function UnifiedCard({ context, actions }: UnifiedCardProps) {
     if (dealstage === STAGES.newLead) {
       return (
         <Flex direction="column" gap="sm">
-          <StageHeader details={details} stageLabel={labelForStage(dealstage)} />
+          <StageHeader
+            dealId={dealId}
+            details={details}
+            stageLabel={labelForStage(dealstage)}
+            onChanged={fetchAll}
+          />
           <CommissionLockedBanner details={details} />
           <SetupView
             dealId={dealId}
@@ -329,7 +345,12 @@ function UnifiedCard({ context, actions }: UnifiedCardProps) {
     ) {
       return (
         <Flex direction="column" gap="sm">
-          <StageHeader details={details} stageLabel={labelForStage(dealstage)} />
+          <StageHeader
+            dealId={dealId}
+            details={details}
+            stageLabel={labelForStage(dealstage)}
+            onChanged={fetchAll}
+          />
           <CommissionLockedBanner details={details} />
           <ReferralTableView
             dealId={dealId}
@@ -345,7 +366,12 @@ function UnifiedCard({ context, actions }: UnifiedCardProps) {
     // Any other inactive stage — informational only.
     return (
       <Flex direction="column" gap="sm">
-        <StageHeader details={details} stageLabel={labelForStage(dealstage)} />
+        <StageHeader
+          dealId={dealId}
+          details={details}
+          stageLabel={labelForStage(dealstage)}
+          onChanged={fetchAll}
+        />
         <CommissionLockedBanner details={details} />
         <Alert title="Card not active at this stage" variant="info">
           {cardData.message ||

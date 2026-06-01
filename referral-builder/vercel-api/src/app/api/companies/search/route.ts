@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
             {
               propertyName: 'name',
               operator: 'CONTAINS_TOKEN' as any,
-              value: query,
+              value: query.endsWith('*') ? query : `${query}*`,
             },
             {
               propertyName: config.properties.company.status,
