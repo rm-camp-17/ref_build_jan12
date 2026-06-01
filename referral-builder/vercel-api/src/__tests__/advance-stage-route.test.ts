@@ -62,7 +62,7 @@ beforeEach(() => {
 });
 
 describe('POST /api/deals/[dealId]/advance-stage', () => {
-  test.each(['presentationscheduled', 'closedlost'])(
+  test.each(['appointmentscheduled', 'presentationscheduled', 'closedlost'])(
     'accepts toStage=%s and writes dealstage',
     async (stage) => {
       const req = makeReq({ toStage: stage });

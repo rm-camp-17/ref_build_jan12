@@ -26,7 +26,20 @@ import {
   DealAuthorizationError,
 } from '@/lib/require-deal-authorization';
 
-const ALLOWED_STAGES = ['presentationscheduled', 'closedlost'] as const;
+// Stages the card's StageNav can move a deal to via this route.
+//   - appointmentscheduled   ← Step Back from Referrals to Setup
+//   - presentationscheduled  → Forward from Setup to Referrals
+//   - closedlost              Mark as Lost
+// Forward Referrals → Session and Session → Won are intentionally NOT
+// here: they go through `/select-session` and the Mark Selected saga
+// which write program_id / programname / tuition_at_enrollment as part
+// of the transition. Bypassing them would leave the deal in an
+// inconsistent state.
+const ALLOWED_STAGES = [
+  'appointmentscheduled',
+  'presentationscheduled',
+  'closedlost',
+] as const;
 type AllowedStage = (typeof ALLOWED_STAGES)[number];
 
 export async function POST(

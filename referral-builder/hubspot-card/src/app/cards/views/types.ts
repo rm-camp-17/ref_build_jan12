@@ -90,6 +90,7 @@ export interface DealDetails {
   note_1: string | null;
   parent_contact_count: number;
   associated_child_count: number;
+  associated_household_count: number;
   associated_companies: Array<{ id: string; name: string | null }>;
 }
 
