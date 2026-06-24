@@ -137,6 +137,11 @@ export async function GET(
       closed_lost_reason: deal.closed_lost_reason,
       wait_until_year: deal.wait_until_year,
       note_1: deal.note_1,
+      // Enrollment-email fields (item 4) — tuition_at_enrollment is already
+      // returned above.
+      send_enrollment_email: deal.send_enrollment_email,
+      enrollment_email_sent: deal.enrollment_email_sent,
+      enrollment_email_sent_date: deal.enrollment_email_sent_date,
     });
   } catch (err: any) {
     console.error(

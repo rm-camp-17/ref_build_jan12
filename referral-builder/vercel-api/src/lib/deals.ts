@@ -82,6 +82,10 @@ const SESSION_CARD_PROPERTIES: ReadonlyArray<string> = [
   'closed_lost_category',
   'closed_lost_reason',
   'wait_until_year',
+  // Enrollment-email fields (item 4)
+  'send_enrollment_email',
+  'enrollment_email_sent',
+  'enrollment_email_sent_date',
 ];
 
 // ============================================================================
@@ -127,6 +131,10 @@ export interface DealRecord {
   closed_lost_category: string | null;
   closed_lost_reason: string | null;
   wait_until_year: string | null;
+  // Enrollment-email fields (item 4)
+  send_enrollment_email: string | null;
+  enrollment_email_sent: string | null;
+  enrollment_email_sent_date: string | null;
 }
 
 // ============================================================================
@@ -176,6 +184,9 @@ export async function getDeal(dealId: string): Promise<DealRecord | null> {
       closed_lost_category: p.closed_lost_category ?? null,
       closed_lost_reason: p.closed_lost_reason ?? null,
       wait_until_year: p.wait_until_year ?? null,
+      send_enrollment_email: p.send_enrollment_email ?? null,
+      enrollment_email_sent: p.enrollment_email_sent ?? null,
+      enrollment_email_sent_date: p.enrollment_email_sent_date ?? null,
     };
   } catch (err: any) {
     if (err?.code === 404 || err?.statusCode === 404) {
