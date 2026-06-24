@@ -33,6 +33,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDeal, updateDeal } from '@/lib/deals';
 import { parseRequestBody } from '@/lib/parse-request-body';
+import { notifyPipelineFailure } from '@/lib/error-notifier';
 import {
   requireUnlocked,
   RequireUnlockedError,
@@ -199,6 +200,12 @@ export async function PATCH(
       err.message,
       err.stack
     );
+    await notifyPipelineFailure({
+      action: 'loss-reason',
+      dealId,
+      error: err?.message ?? String(err),
+      detail: `category=${category}, setStageToLost=${body.setStageToLost === true}`,
+    });
     return NextResponse.json(
       { success: false, message: 'Failed to update deal.' },
       { status: 500 }

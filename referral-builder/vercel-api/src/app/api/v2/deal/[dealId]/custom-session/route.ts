@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { selectCustomSession } from '@/lib/deal-updater';
 import { parseRequestBody } from '@/lib/parse-request-body';
+import { notifyPipelineFailure } from '@/lib/error-notifier';
 import {
   requireUnlocked,
   RequireUnlockedError,
@@ -98,6 +99,11 @@ export async function POST(
       err.message,
       err.stack
     );
+    await notifyPipelineFailure({
+      action: 'custom-session',
+      dealId,
+      error: err?.message ?? String(err),
+    });
     return NextResponse.json(
       {
         success: false,

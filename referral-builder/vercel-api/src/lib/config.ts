@@ -133,6 +133,7 @@ export const config = {
     resendFrom: process.env.ALERT_FROM_EMAIL || 'alerts@campexperts.com',
     // Riley McDonough's HubSpot owner id in portal 50530609 (fallback task assignee).
     adminOwnerId: process.env.ALERT_ADMIN_OWNER_ID || '83628479',
+    portalId: process.env.HS_PORTAL_ID || '50530609',
   },
 } as const;
 

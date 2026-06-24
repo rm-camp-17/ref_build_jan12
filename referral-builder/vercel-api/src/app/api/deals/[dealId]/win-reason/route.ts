@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { updateDeal } from '@/lib/deals';
 import { parseRequestBody } from '@/lib/parse-request-body';
+import { notifyPipelineFailure } from '@/lib/error-notifier';
 import {
   requireUnlocked,
   RequireUnlockedError,
@@ -106,6 +107,12 @@ export async function PATCH(
       err.message,
       err.stack
     );
+    await notifyPipelineFailure({
+      action: 'win-reason',
+      dealId,
+      error: err?.message ?? String(err),
+      detail: `category=${category}`,
+    });
     return NextResponse.json(
       { success: false, message: 'Failed to update deal.' },
       { status: 500 }
