@@ -1,16 +1,17 @@
 /**
  * POST /api/v2/deal/[dealId]/custom-session
  *
- * Rep typed in a custom session ("Other, requires office approval"):
- * write the inputs but DO NOT advance the deal stage. The deal stays at
- * Tuition Undecided so an admin can review before billing.
+ * Rep typed in a custom "Other" session amount. Item 6: this now writes
+ * the inputs AND advances the deal to "Program Selected" (Closed Won),
+ * exactly like picking a listed session. Tuition is sanitized so values
+ * like "$1,200" parse correctly instead of silently 400-ing.
  *
  * Body:
  *   {
  *     description?: string    (optional; defaults to "Custom session")
- *     tuition: number         (required, > 0)
+ *     tuition: number|string  (required, > 0; "$1,200" accepted)
  *     currency?: string       (optional; defaults to "USD")
- *     weeks: number           (required, > 0)
+ *     weeks: number|string    (required, > 0)
  *   }
  */
 
@@ -63,8 +64,12 @@ export async function POST(
     throw err;
   }
 
-  const tuition = parseFloat(String(body?.tuition));
-  const weeks = parseFloat(String(body?.weeks));
+  // Sanitize money/number input: strip currency symbols, thousands
+  // separators and stray whitespace so "$1,200" / "1 200" parse correctly.
+  const toNumber = (v: unknown) =>
+    parseFloat(String(v ?? '').replace(/[^0-9.\-]/g, ''));
+  const tuition = toNumber(body?.tuition);
+  const weeks = toNumber(body?.weeks);
 
   if (!Number.isFinite(tuition) || tuition <= 0) {
     return NextResponse.json(

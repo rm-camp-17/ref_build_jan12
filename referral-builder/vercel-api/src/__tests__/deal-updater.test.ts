@@ -17,6 +17,8 @@ jest.mock('../lib/companies', () => ({
 jest.mock('../lib/deals', () => ({
   updateDeal: jest.fn().mockResolvedValue(undefined),
   associateDealToCompany: jest.fn().mockResolvedValue(undefined),
+  getDeal: jest.fn().mockResolvedValue(null),
+  reconcileDealName: jest.fn((opts: any) => opts.currentName ?? ''),
 }));
 
 import { getSessionById } from '../lib/sessions';
@@ -121,7 +123,7 @@ describe('selectSession', () => {
 });
 
 describe('selectCustomSession', () => {
-  test('writes inputs but does NOT advance dealstage', async () => {
+  test('writes inputs AND advances dealstage to Program Selected (item 6)', async () => {
     const result = await selectCustomSession('100', {
       description: 'Mountain biking week',
       tuition: 1500,
@@ -136,10 +138,12 @@ describe('selectCustomSession', () => {
       lengthofstay: '1',
       deal_currency_code: 'CAD',
       session_name: 'Mountain biking week',
+      // Item 6: custom "Other" now advances like a preset session.
+      dealstage: 'decisionmakerboughtin',
     });
-    // Critical: no dealstage write — deal stays at Tuition Undecided
-    expect(result.properties.dealstage).toBeUndefined();
-    expect(result.properties.note_1).toContain('CUSTOM (pending approval)');
+    // closedate = today's ISO date
+    expect(result.properties.closedate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(result.properties.note_1).toContain('CUSTOM session');
     // Session pointer fields NOT written (unknown for custom sessions)
     expect(result.properties.session_start_date).toBeUndefined();
     expect(result.properties.session_end_date).toBeUndefined();

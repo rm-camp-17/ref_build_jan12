@@ -162,9 +162,13 @@ function LostCaptureForm({
     setError(null);
     setSaving(true);
     try {
-      const body: Record<string, string | number> = {
+      const body: Record<string, string | number | boolean> = {
         closed_lost_category: category,
         closed_lost_reason: reason,
+        // Without this flag the backend writes the loss reason but leaves
+        // dealstage untouched, so the deal never actually moves to Closed
+        // Lost. "Mark as Lost" must always transition the stage.
+        setStageToLost: true,
       };
       if (showWaitYear && waitYear) {
         body.wait_until_year = parseInt(waitYear, 10);
