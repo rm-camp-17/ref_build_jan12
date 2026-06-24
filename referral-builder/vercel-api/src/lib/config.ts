@@ -119,7 +119,8 @@ export const config = {
     clientInterest: 'active_considering',
     // Value written to sibling referrals when one program is Selected
     // (item 5): they drop off the active list but keep their associations.
-    clientInterestDeclined: 'declined',
+    // Capitalized to match how the saga writes the "Selected" value.
+    clientInterestDeclined: process.env.HS_REFERRAL_INTEREST_DECLINED_VALUE || 'Declined',
   },
 
   // Admin alerting (item 7). When a pipeline action fails we email the

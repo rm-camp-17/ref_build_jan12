@@ -225,6 +225,85 @@ async function findExistingSelectedReferral(dealId: string): Promise<string | nu
 }
 
 /**
+ * True when a referral's interest is "Active / considering" (the only
+ * state that gets inactivated when a sibling is Selected). Normalizes so
+ * it matches both the internal value (`active_considering`) and the label
+ * form ("Active / considering").
+ */
+function isActiveOrConsidering(interest: string | null | undefined): boolean {
+  if (!interest) return false;
+  const norm = interest.toLowerCase();
+  return norm.includes('active') || norm.includes('considering');
+}
+
+/**
+ * Item 5: when one referral on a deal is marked Selected, drop the other
+ * referrals on the same deal that are still "Active / considering" to
+ * Declined. Referrals in any other state (Shortlist, Neutral, Unlikely,
+ * already Declined/Selected, blank) are left untouched. We only flip the
+ * interest — every referral keeps its associations.
+ *
+ * Best-effort: failures are logged, never thrown, so they never undo a
+ * successful selection.
+ */
+async function inactivateSiblingReferrals(
+  dealId: string,
+  selectedReferralId: string
+): Promise<void> {
+  try {
+    const referralIds = await getAssociatedIds(
+      'deals',
+      dealId,
+      config.objectTypes.referral
+    );
+    const siblings = referralIds.filter((id) => id !== selectedReferralId);
+    if (siblings.length === 0) return;
+
+    const batch = await hubspotClient.crm.objects.batchApi.read(
+      config.objectTypes.referral,
+      {
+        inputs: siblings.map((id) => ({ id })),
+        properties: [
+          config.properties.referral.interestCanonical,
+          config.properties.referral.interest,
+        ],
+        propertiesWithHistory: [],
+      }
+    );
+
+    const declined = config.defaults.clientInterestDeclined;
+    await Promise.all(
+      batch.results.map(async (r) => {
+        const interest = pickReferralProperty(r.properties, 'interest');
+        // Only inactivate the active/considering siblings; leave terminal
+        // and other states as-is.
+        if (!isActiveOrConsidering(interest)) return;
+        try {
+          await hubspotClient.crm.objects.basicApi.update(
+            config.objectTypes.referral,
+            r.id,
+            { properties: dualWriteReferralProperty('interest', declined) }
+          );
+          console.log(
+            `[workflow] Sibling referral ${r.id} → ${declined} (deal ${dealId})`
+          );
+        } catch (err: any) {
+          console.warn(
+            `[workflow] Could not inactivate sibling referral ${r.id} (non-fatal):`,
+            err.message
+          );
+        }
+      })
+    );
+  } catch (err: any) {
+    console.warn(
+      `[workflow] inactivateSiblingReferrals failed for deal ${dealId} (non-fatal):`,
+      err.message
+    );
+  }
+}
+
+/**
  * Update deal properties for the referral-to-session integration.
  * Writes program_id, programname, and dealstage in a single PATCH call.
  *
@@ -1258,6 +1337,11 @@ export async function updateReferralWorkflow(
         errors: [sagaResult.error || 'Failed to update deal for session selection'],
       };
     }
+
+    // Item 5: with one program selected, drop the deal's other
+    // active/considering referrals to Declined (keeps their associations).
+    // Best-effort — never undoes the successful selection.
+    await inactivateSiblingReferrals(context.dealId, referralId);
 
     console.log(`[workflow] Updated referral ${referralId} to Selected + deal ${context.dealId} transitioned`);
     return { success: true };
