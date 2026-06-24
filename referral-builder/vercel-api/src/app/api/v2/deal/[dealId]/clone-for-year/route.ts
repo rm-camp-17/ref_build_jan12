@@ -37,6 +37,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cloneForYear } from '@/lib/clone';
 import { parseRequestBody } from '@/lib/parse-request-body';
+import { notifyPipelineFailure } from '@/lib/error-notifier';
 import {
   requireDealAuthorization,
   DealAuthorizationError,
@@ -110,6 +111,12 @@ export async function POST(
       err.message,
       err.stack
     );
+    await notifyPipelineFailure({
+      action: 'clone-for-year',
+      dealId,
+      error: err?.message ?? String(err),
+      detail: `targetYear=${targetYear}`,
+    });
     return NextResponse.json(
       { success: false, message: 'Failed to clone deal. Please try again.' },
       { status: 500 }

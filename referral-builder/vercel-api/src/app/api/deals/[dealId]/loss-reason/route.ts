@@ -128,8 +128,9 @@ export async function PATCH(
       );
     }
     // Floor: a rep entering currentYear means "wait until this year",
-    // which is a no-op. Bump it to currentYear + 1 so the auto-clone job
-    // has something to act on.
+    // which is a no-op. Bump it to currentYear + 1 so the immediate
+    // clone-to-next-year offered on the Closed Lost view targets a real
+    // future year.
     resolvedWaitUntilYear = wy === currentYear ? currentYear + 1 : wy;
   } else if (waitProvided) {
     return NextResponse.json(

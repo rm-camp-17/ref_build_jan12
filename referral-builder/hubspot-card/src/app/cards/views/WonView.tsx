@@ -450,8 +450,9 @@ function CloneForYearSection({
         <Flex direction="column" gap="sm">
           <Heading level={3}>Create Deal for Next Year</Heading>
           <Text variant="microcopy">
-            Creates a new deal with the same camp, owner, and expert
-            assignment, but with tuition + session reset for the new year.
+            Creates a new deal for the new year with the same referrals,
+            associations, prior activity, camp, owner, and expert
+            assignment — tuition + session reset for the new year.
           </Text>
           <Input
             label="Target Year"
