@@ -208,6 +208,7 @@ export function ReferralTableView({
     DEFAULTS.CLIENT_INTEREST
   );
   const [note, setNote] = useState("");
+  const [copyingCreateNote, setCopyingCreateNote] = useState(false);
 
   // Household History state
   const [householdData, setHouseholdData] = useState<HouseholdData | null>(null);
@@ -720,6 +721,28 @@ export function ReferralTableView({
                 "EXAMPLE: Lily is sweet, a little shy at first, warms up fast..."
               }
             />
+
+            {/* Item 8: people reuse the same company note — copy this note
+                onto every existing referral on the deal in one click. */}
+            {referrals.length > 0 && !locked && (
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={busy || copyingCreateNote || !note.trim()}
+                onClick={async () => {
+                  setCopyingCreateNote(true);
+                  try {
+                    await copyNoteToOtherReferrals("", note);
+                  } finally {
+                    setCopyingCreateNote(false);
+                  }
+                }}
+              >
+                {copyingCreateNote
+                  ? "Copying…"
+                  : `Copy this note to all referrals (${referrals.length})`}
+              </Button>
+            )}
 
             <Divider />
 
