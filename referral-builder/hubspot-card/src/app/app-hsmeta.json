@@ -12,7 +12,8 @@
         "crm.objects.deals.write",
         "crm.objects.companies.read",
         "crm.objects.custom.read",
-        "crm.objects.custom.write"
+        "crm.objects.custom.write",
+        "files"
       ],
       "optionalScopes": [],
       "conditionallyRequiredScopes": []
