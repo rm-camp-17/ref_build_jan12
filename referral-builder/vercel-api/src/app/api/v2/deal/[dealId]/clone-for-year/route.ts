@@ -43,6 +43,13 @@ import {
   DealAuthorizationError,
 } from '@/lib/require-deal-authorization';
 
+// The clone now awaits its association/referral/activity copy before
+// responding (previously fire-and-forget in setTimeout, which Vercel froze).
+// For a deal with many referrals that copy is a few dozen sequential HubSpot
+// calls — give the function room beyond the short default.
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+
 export async function POST(
   req: NextRequest,
   { params }: { params: { dealId: string } }
