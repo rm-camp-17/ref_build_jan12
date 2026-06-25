@@ -54,6 +54,7 @@ jest.mock('../lib/clone-ledger', () => ({
   insertCloneLedger: (...args: unknown[]) => mockInsertLedger(...args),
   buildIdempotencyKey: (sourceKey: string, year: number) =>
     `clone:${sourceKey}:${year}`,
+  ensureCloneLedgerTable: jest.fn().mockResolvedValue(undefined),
 }));
 
 import { hubspotClient } from '../lib/hubspot';
