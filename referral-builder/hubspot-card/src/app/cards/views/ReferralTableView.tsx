@@ -572,6 +572,26 @@ export function ReferralTableView({
     };
   }, [companyQuery, searchCompanies]);
 
+  // The memo is built from the camps the client is considering — i.e. this
+  // deal's referrals (each referral is associated to a camp company). The deal
+  // itself usually has no *direct* company associations, so `dealCompanies`
+  // (from details.associated_companies) is empty and the memo showed
+  // "No camps yet" despite the referrals. Derive the camp list from the
+  // referrals, union any direct associations, and dedupe by company id.
+  const memoCompanies = useMemo<DealCompany[]>(() => {
+    const byId = new Map<string, DealCompany>();
+    for (const r of referrals) {
+      const id = r.company?.id;
+      if (id && !byId.has(id)) {
+        byId.set(id, { id, name: r.company?.name });
+      }
+    }
+    for (const c of dealCompanies) {
+      if (c.id && !byId.has(c.id)) byId.set(c.id, c);
+    }
+    return Array.from(byId.values());
+  }, [referrals, dealCompanies]);
+
   // ==========================================================================
   // Render
   // ==========================================================================
@@ -837,7 +857,7 @@ export function ReferralTableView({
 
       <MemoBuilderSection
         dealId={dealId}
-        companies={dealCompanies}
+        companies={memoCompanies}
         locked={locked}
         actions={actions}
       />
