@@ -360,6 +360,24 @@ async function copyAssociationsBestEffort(
 }
 
 /**
+ * Build the referral display name the same way the normal create does
+ * ("<deal/child name> & <camp> - <date>"). `referral_name` is a REQUIRED
+ * property on the referral object — without it the create 400s with
+ * "Some required properties were not set: referral_name".
+ */
+function buildClonedReferralName(dealName: string, companyName?: string): string {
+  const today = new Date().toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const parts: string[] = [];
+  if (dealName) parts.push(dealName);
+  if (companyName) parts.push(companyName);
+  return parts.length ? `${parts.join(' & ')} - ${today}` : `Referral - ${today}`;
+}
+
+/**
  * Item 1: carry the prior year's referrals onto the cloned deal. For each
  * referral on the source deal we create a fresh referral on the new deal —
  * same camp (company) and note — with status/interest reset for the new
@@ -396,6 +414,13 @@ async function copyReferralsToClone(
     /* best-effort: if we can't read the target, fall through and create */
   }
 
+  // Same for every cloned referral: the deal name with the year swapped to the
+  // clone's target year (used for the required referral_name display field).
+  const clonedDealName = (source.dealname || '').replace(
+    source.year1 ?? '',
+    String(targetYear)
+  );
+
   for (const ref of sourceReferrals) {
     // Already copied (same camp on the target) — skip to avoid duplicates.
     if (ref.company?.id && existingCompanyIds.has(ref.company.id)) continue;
@@ -404,6 +429,11 @@ async function copyReferralsToClone(
     if (!ref.company?.id && targetHasReferrals) continue;
     try {
       const properties: Record<string, string> = {
+        // REQUIRED — referral create 400s without it.
+        [config.properties.referral.name]: buildClonedReferralName(
+          clonedDealName,
+          ref.company?.name
+        ),
         [config.properties.referral.note]: ref.note || '',
         [config.properties.referral.copiedDealKey]: source.deal_key ?? '',
         [config.properties.referral.copiedYear]: source.year1 ?? '',
@@ -411,6 +441,9 @@ async function copyReferralsToClone(
         ...dualWriteReferralProperty('outreach', config.defaults.referralStatus),
         ...dualWriteReferralProperty('interest', config.defaults.clientInterest),
       };
+      if (source.hubspot_owner_id) {
+        properties[config.properties.referral.ownerId] = source.hubspot_owner_id;
+      }
       if (ref.company?.id) {
         properties[config.properties.referral.key] = `${newDealId}-${ref.company.id}`;
       }
