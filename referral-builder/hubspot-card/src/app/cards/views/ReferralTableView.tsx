@@ -903,6 +903,18 @@ function MemoBuilderSection({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<MemoResult | null>(null);
 
+  // Memo generation is async — the backend composes with Claude (too slow for a
+  // synchronous request through HubSpot's fetch gateway). We POST to start a
+  // job, then poll for its result. pollRef holds the interval so we can stop it.
+  const pollRef = useRef<any>(null);
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+  useEffect(() => () => stopPolling(), [stopPolling]); // clear on unmount
+
   // Seed/refresh the selection map when the company list changes (default on).
   useEffect(() => {
     setSelected((prev) => {
@@ -917,6 +929,65 @@ function MemoBuilderSection({
   const selectedIds = companies
     .map((c) => c.id)
     .filter((id) => selected[id]);
+
+  // Poll a started job until it's done or errored. busy stays true throughout.
+  const startPolling = useCallback(
+    (jobId: string) => {
+      const startedAt = Date.now();
+      const TIMEOUT_MS = 5 * 60 * 1000;
+      const tick = async () => {
+        try {
+          const resp = await hubspot.fetch(
+            `${API_BASE}/api/v2/deal/${dealId}/generate-memo?jobId=${encodeURIComponent(
+              jobId
+            )}&_t=${Date.now()}`,
+            { method: "GET" }
+          );
+          const data = await resp.json().catch(() => ({}));
+          if (data?.status === "done") {
+            stopPolling();
+            setBusy(false);
+            setResult({
+              fileUrl: data.fileUrl ?? null,
+              fileName: data.fileName,
+              campsIncluded: data.campsIncluded ?? [],
+              limitedInfoCamps: data.limitedInfoCamps ?? [],
+            });
+            actions?.addAlert?.({
+              type: "success",
+              message: "Memo generated and attached to the deal.",
+            });
+            return;
+          }
+          if (data?.status === "error") {
+            stopPolling();
+            setBusy(false);
+            setError(data?.message || "Failed to generate the memo.");
+            return;
+          }
+          // still pending — give up after the timeout window
+          if (Date.now() - startedAt > TIMEOUT_MS) {
+            stopPolling();
+            setBusy(false);
+            setError(
+              "The memo is taking longer than expected — it may still finish. Check the deal's files in a minute, or try again."
+            );
+          }
+        } catch (e: any) {
+          // transient poll failure: keep trying until the timeout window
+          if (Date.now() - startedAt > TIMEOUT_MS) {
+            stopPolling();
+            setBusy(false);
+            setError("Lost connection while generating the memo. Please try again.");
+          }
+        }
+      };
+      stopPolling();
+      void tick(); // immediate first check
+      pollRef.current = setInterval(() => void tick(), 3000);
+    },
+    [dealId, actions, stopPolling]
+  );
 
   const generate = useCallback(async () => {
     if (selectedIds.length === 0) {
@@ -938,26 +1009,18 @@ function MemoBuilderSection({
         }
       );
       const data = await resp.json().catch(() => ({}));
-      if (resp.ok && data?.success) {
-        setResult({
-          fileUrl: data.fileUrl ?? null,
-          fileName: data.fileName,
-          campsIncluded: data.campsIncluded ?? [],
-          limitedInfoCamps: data.limitedInfoCamps ?? [],
-        });
-        actions?.addAlert?.({
-          type: "success",
-          message: "Memo generated and attached to the deal.",
-        });
+      if (resp.ok && data?.success && data?.jobId) {
+        // Job started — poll for the result (keeps busy=true meanwhile).
+        startPolling(data.jobId);
       } else {
-        setError(data?.message || "Failed to generate the memo.");
+        setBusy(false);
+        setError(data?.message || "Failed to start memo generation.");
       }
     } catch (e: any) {
-      setError(e?.message || "Failed to generate the memo.");
-    } finally {
       setBusy(false);
+      setError(e?.message || "Failed to start memo generation.");
     }
-  }, [dealId, selectedIds, instructions, actions]);
+  }, [dealId, selectedIds, instructions, startPolling]);
 
   return (
     <Box>
