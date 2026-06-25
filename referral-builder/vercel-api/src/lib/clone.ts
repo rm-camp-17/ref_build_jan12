@@ -24,6 +24,7 @@ import {
   acquireCloneLock,
   findCloneLedger,
   insertCloneLedger,
+  deleteCloneLedger,
   buildIdempotencyKey,
   ensureCloneLedgerTable,
 } from './clone-ledger';
@@ -166,6 +167,26 @@ async function fetchSourceDeal(dealId: string): Promise<SourceDeal | null> {
     }
     console.error(`[clone] Failed to fetch source deal ${dealId}:`, err.message);
     throw err;
+  }
+}
+
+/**
+ * Does this deal still exist in HubSpot? Used to validate a dedup hit before
+ * trusting it — a rep may have deleted a previously-created clone, and we must
+ * not keep returning that phantom id forever. On a non-404 error we assume it
+ * exists (don't recreate on a transient blip).
+ */
+async function dealExists(dealId: string): Promise<boolean> {
+  try {
+    await hubspotClient.crm.deals.basicApi.getById(dealId, ['dealstage']);
+    return true;
+  } catch (err: any) {
+    if (err?.code === 404 || err?.statusCode === 404) return false;
+    console.warn(
+      `[clone] could not verify deal ${dealId} exists (assuming it does):`,
+      err?.message ?? err
+    );
+    return true;
   }
 }
 
@@ -543,27 +564,38 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
   const result = await withTransaction(async (client): Promise<CloneResult> => {
     await acquireCloneLock(client, idempotencyKey);
 
-    // 2a: ledger check (definitive)
+    // 2a: ledger check (definitive) — but only trust it if the recorded clone
+    // still exists. A rep may have deleted a previously-created clone; if so we
+    // drop the stale row and fall through to recreate, instead of forever
+    // returning a phantom deal id ("dedup hit" to a deal that's gone).
     const existing = await findCloneLedger(client, sourceKey, targetYear);
     if (existing) {
-      console.log(
-        `[clone] Dedup hit (ledger): ${idempotencyKey} → ${existing.new_deal_id}`
+      if (await dealExists(String(existing.new_deal_id))) {
+        console.log(
+          `[clone] Dedup hit (ledger): ${idempotencyKey} → ${existing.new_deal_id}`
+        );
+        return {
+          success: true,
+          deduped: true,
+          newDealId: String(existing.new_deal_id),
+          // We don't store dealname in the ledger; query a friendly default.
+          newDealName: source.dealname.replace(
+            source.year1 ?? '',
+            String(targetYear)
+          ),
+        };
+      }
+      console.warn(
+        `[clone] ledger pointed to deleted deal ${existing.new_deal_id} for ${idempotencyKey}; dropping stale row and recreating.`
       );
-      return {
-        success: true,
-        deduped: true,
-        newDealId: String(existing.new_deal_id),
-        // We don't store dealname in the ledger; query a friendly default.
-        newDealName: source.dealname.replace(
-          source.year1 ?? '',
-          String(targetYear)
-        ),
-      };
+      await deleteCloneLedger(client, sourceKey, targetYear);
     }
 
-    // 2b: HubSpot search (recovery path for failed past transactions)
+    // 2b: HubSpot search (recovery path for failed past transactions). Same
+    // guard: only trust a match that still exists (search can lag behind a
+    // just-deleted deal).
     const orphaned = await findExistingCloneInHubSpot(sourceKey, targetYear);
-    if (orphaned) {
+    if (orphaned && (await dealExists(orphaned))) {
       console.log(
         `[clone] Dedup hit (HubSpot recovery): ${idempotencyKey} → ${orphaned}`
       );

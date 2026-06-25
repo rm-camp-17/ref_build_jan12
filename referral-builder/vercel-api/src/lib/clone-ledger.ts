@@ -118,6 +118,24 @@ export async function insertCloneLedger(
 }
 
 /**
+ * Drop a ledger row. Used when the recorded clone no longer exists in HubSpot
+ * (e.g. a rep deleted the test clone) — we delete the stale row so the clone
+ * can be recreated instead of forever deduping to a phantom deal.
+ *
+ * MUST be called inside a transaction that holds the advisory lock.
+ */
+export async function deleteCloneLedger(
+  client: PoolClient,
+  sourceKey: string,
+  targetYear: number
+): Promise<void> {
+  await client.query(
+    `DELETE FROM clone_ledger WHERE source_key = $1 AND target_year = $2`,
+    [sourceKey, targetYear]
+  );
+}
+
+/**
  * Build the idempotency key. Stable across retries — same source +
  * target = same lock + same ledger row.
  */
