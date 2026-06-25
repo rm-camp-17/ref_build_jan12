@@ -215,10 +215,26 @@ async function findExistingCloneInHubSpot(
   }
 }
 
+/**
+ * Resolve a stable dedup key for the clone. Prefers the deal's own
+ * `deal_key`; falls back to the natural `{childId}|{year}` form, then to
+ * `deal:{id}`. Always non-empty + searchable, so a clone never has to
+ * refuse for a missing deal_key, and re-clicking still dedups via the
+ * ledger / HubSpot recovery search on `copied_from_deal_key`.
+ */
+function resolveSourceDedupKey(source: SourceDeal, sourceDealId: string): string {
+  if (source.deal_key) return source.deal_key;
+  if (source.associated_child_id) {
+    return `${source.associated_child_id}|${source.year1 ?? ''}`;
+  }
+  return `deal:${sourceDealId}`;
+}
+
 function buildClonePayload(
   source: SourceDeal,
   targetYear: number,
-  landingStage: string
+  landingStage: string,
+  sourceKey: string
 ): Record<string, string> {
   // dealname: strip any attending-program suffix (item 2) from the source
   // name first, then swap the embedded year. Otherwise "Jane 2026 — Camp X"
@@ -239,8 +255,8 @@ function buildClonePayload(
     // carry over (rep continues from the recommendation), else New Lead.
     dealstage: landingStage,
     deal_key: newDealKey,
-    // Lineage — primary dedup key
-    copied_from_deal_key: source.deal_key ?? '',
+    // Lineage — primary dedup key (derived; matches the recovery search)
+    copied_from_deal_key: sourceKey,
     // Camp / program — preserve from source
     program_id: source.program_id ?? '',
     programname: source.programname ?? '',
@@ -441,13 +457,11 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
   if (!source) {
     return { success: false, message: 'Source deal not found.' };
   }
-  if (!source.deal_key) {
-    return {
-      success: false,
-      message:
-        'Source deal has no deal_key set. Cannot dedup the clone — refusing.',
-    };
-  }
+
+  // Item 1: clone must fire even when the source has no deal_key (common on
+  // older deals — it's only auto-set during referral creation/clone). Derive
+  // a stable, searchable dedup key instead of refusing.
+  const sourceKey = resolveSourceDedupKey(source, sourceDealId);
 
   // Item 1: pick the landing stage from whether referrals carry over.
   // Recommendation Plan Presented when the source has referrals (the rep
@@ -485,7 +499,6 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
     };
   }
 
-  const sourceKey = source.deal_key;
   const idempotencyKey = buildIdempotencyKey(sourceKey, targetYear);
 
   // Step 2: race-safe dedup + create inside one transaction
@@ -529,7 +542,7 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
     }
 
     // Step 3: build payload + create in HubSpot
-    const properties = buildClonePayload(source, targetYear, landingStage);
+    const properties = buildClonePayload(source, targetYear, landingStage, sourceKey);
     let newDeal: { id: string };
     try {
       newDeal = await hubspotClient.crm.deals.basicApi.create({

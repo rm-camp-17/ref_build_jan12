@@ -236,6 +236,15 @@ export function ReferralTableView({
 
   const formStep = !selectedCompanyId ? 0 : canCreate ? 2 : 1;
 
+  // Item 8: the note from the most recently created referral, so the rep can
+  // pull it into a new referral instead of retyping the same company note.
+  // HubSpot object IDs are sequential, so the highest id is the newest.
+  const mostRecentNote = useMemo(() => {
+    if (referrals.length === 0) return "";
+    const newest = [...referrals].sort((a, b) => Number(b.id) - Number(a.id))[0];
+    return (newest?.note || "").trim();
+  }, [referrals]);
+
   // ==========================================================================
   // API helpers
   // ==========================================================================
@@ -501,47 +510,6 @@ export function ReferralTableView({
     ]
   );
 
-  // Item 8: copy one referral's "note to company" onto every other referral
-  // on this deal — people reuse the same company note. Context omits
-  // previousClientInterest on purpose so a note-only PATCH can never trip
-  // the selection/de-selection saga on a Selected referral.
-  const copyNoteToOtherReferrals = useCallback(
-    async (sourceReferralId: string, note: string) => {
-      setError(null);
-      const targets = referrals.filter((r) => r.id !== sourceReferralId);
-      if (targets.length === 0) {
-        actions?.addAlert?.({
-          type: "info",
-          message: "No other referrals on this deal to copy the note to.",
-        });
-        return;
-      }
-      try {
-        await Promise.all(
-          targets.map((r) =>
-            apiRequest(`/api/referrals/${r.id}`, {
-              method: "PATCH",
-              body: {
-                properties: { referral_note_to_company: note },
-                context: { dealId },
-              },
-            })
-          )
-        );
-        actions?.addAlert?.({
-          type: "success",
-          message: `Note copied to ${targets.length} other referral${
-            targets.length === 1 ? "" : "s"
-          }.`,
-        });
-        await loadReferrals();
-      } catch (e: any) {
-        setError(e?.message || "Failed to copy note to other referrals");
-      }
-    },
-    [apiRequest, actions, referrals, dealId, loadReferrals]
-  );
-
   // ==========================================================================
   // Effects
   // ==========================================================================
@@ -721,6 +689,21 @@ export function ReferralTableView({
               }
             />
 
+            {/* Item 8: people reuse the same company note. Pull the note from
+                the most recently created referral into this new (unsubmitted)
+                referral so it doesn't have to be retyped. Local only — nothing
+                is saved until Create Referral. */}
+            {mostRecentNote && !locked && (
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => setNote(mostRecentNote)}
+              >
+                Copy note from last referral
+              </Button>
+            )}
+
             <Divider />
 
             {canCreate && !copySource && !pendingSelectedConfirm && (
@@ -833,8 +816,6 @@ export function ReferralTableView({
                   statusOptions={statusOptions}
                   interestOptions={interestOptions}
                   onUpdate={updateReferral}
-                  onCopyNote={copyNoteToOtherReferrals}
-                  hasSiblings={referrals.length > 1}
                   busy={busy}
                   locked={locked}
                 />
@@ -974,8 +955,6 @@ interface ReferralCardProps {
   statusOptions: Option[];
   interestOptions: Option[];
   onUpdate: (id: string, properties: Record<string, string>) => Promise<void>;
-  onCopyNote: (id: string, note: string) => Promise<void>;
-  hasSiblings: boolean;
   busy: boolean;
   locked: boolean;
 }
@@ -985,8 +964,6 @@ function ReferralCard({
   statusOptions,
   interestOptions,
   onUpdate,
-  onCopyNote,
-  hasSiblings,
   busy,
   locked,
 }: ReferralCardProps) {
@@ -1002,8 +979,8 @@ function ReferralCard({
 
   const alreadySelected = referral.clientInterest === "Selected";
 
-  // Item 5: one-click "Client selected this program" — marks the referral
-  // Selected and advances the deal in a single click. Same backend as the
+  // Item 5: one-click "CREATE SIGN UP" — marks the referral Selected and
+  // advances the deal in a single click. Same backend as the
   // Edit → Interest → Selected → confirm flow, just no dropdown, no confirm
   // reload, and no referral-first dependency.
   const handleSelectProgram = async () => {
@@ -1012,16 +989,6 @@ function ReferralCard({
       await onUpdate(referral.id, { client_interest: "Selected" });
     } finally {
       setSelecting(false);
-    }
-  };
-
-  const [copying, setCopying] = useState(false);
-  const handleCopyNote = async () => {
-    setCopying(true);
-    try {
-      await onCopyNote(referral.id, localNote);
-    } finally {
-      setCopying(false);
     }
   };
 
@@ -1082,7 +1049,7 @@ function ReferralCard({
                 disabled={locked || busy || selecting}
                 onClick={handleSelectProgram}
               >
-                {selecting ? "Selecting…" : "Client selected this program"}
+                {selecting ? "Creating…" : "CREATE SIGN UP"}
               </Button>
             )}
             <Button
@@ -1159,17 +1126,6 @@ function ReferralCard({
               rows={6}
               readOnly={locked}
             />
-
-            {hasSiblings && !locked && (
-              <Button
-                size="small"
-                variant="secondary"
-                disabled={busy || copying || saving || !localNote.trim()}
-                onClick={handleCopyNote}
-              >
-                {copying ? "Copying…" : "Copy note to other referrals"}
-              </Button>
-            )}
 
             {pendingConfirm ? (
               <Flex direction="row" gap="sm">
