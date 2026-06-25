@@ -382,7 +382,16 @@ describe('cloneForYear — post-commit copy is awaited (not fire-and-forget)', (
     mockFetchReferrals.mockImplementation((id: string) =>
       Promise.resolve(
         id === '100'
-          ? [{ id: 'R1', company: { id: 'C1', name: 'Camp X' }, note: 'returning camper' }]
+          ? [
+              {
+                id: 'R1',
+                company: { id: 'C1', name: 'Camp X' },
+                note: 'returning camper',
+                // Source status/interest — intentionally NOT carried over.
+                outreachStatus: 'Sent',
+                clientInterest: 'Selected',
+              },
+            ]
           : []
       )
     );
@@ -398,6 +407,14 @@ describe('cloneForYear — post-commit copy is awaited (not fire-and-forget)', (
     const refProps =
       mockHubspot.crm.objects.basicApi.create.mock.calls[0][1].properties;
     expect(refProps[config.properties.referral.name]).toBeTruthy();
+    // Copied referrals always default to "Don’t send (already sent)" /
+    // "Active / considering" for the new year — NOT the source status, and
+    // never the snake_case values that 400'd with INVALID_OPTION.
+    expect(Object.values(refProps)).toContain(config.defaults.referralStatus);
+    expect(Object.values(refProps)).toContain('Active / considering');
+    expect(Object.values(refProps)).not.toContain('Sent');
+    expect(Object.values(refProps)).not.toContain('Selected');
+    expect(Object.values(refProps)).not.toContain('ready_to_send');
 
     // The cloned referral is linked to the new deal — proving the copy is
     // awaited, not deferred to a setTimeout the platform would freeze.
