@@ -25,9 +25,13 @@ export interface UploadedMemo {
 }
 
 function authHeader(): Record<string, string> {
-  const token = config.hubspot.accessToken;
+  // Prefer a dedicated files-scoped token (HUBSPOT_FILES_TOKEN) so the main
+  // access token never needs the `files` scope added. Fall back to it.
+  const token = config.hubspot.filesToken || config.hubspot.accessToken;
   if (!token) {
-    throw new Error('HUBSPOT_ACCESS_TOKEN is not configured.');
+    throw new Error(
+      'No HubSpot token for Files upload (set HUBSPOT_FILES_TOKEN or HUBSPOT_ACCESS_TOKEN).'
+    );
   }
   return { Authorization: `Bearer ${token}` };
 }
