@@ -57,11 +57,13 @@ jest.mock('../lib/pg', () => ({
 
 const mockFindLedger = jest.fn();
 const mockInsertLedger = jest.fn();
+const mockDeleteLedger = jest.fn();
 const mockAcquireLock = jest.fn();
 jest.mock('../lib/clone-ledger', () => ({
   acquireCloneLock: (...args: unknown[]) => mockAcquireLock(...args),
   findCloneLedger: (...args: unknown[]) => mockFindLedger(...args),
   insertCloneLedger: (...args: unknown[]) => mockInsertLedger(...args),
+  deleteCloneLedger: (...args: unknown[]) => mockDeleteLedger(...args),
   buildIdempotencyKey: (sourceKey: string, year: number) =>
     `clone:${sourceKey}:${year}`,
   ensureCloneLedgerTable: jest.fn().mockResolvedValue(undefined),
@@ -195,6 +197,62 @@ describe('cloneForYear — dedup', () => {
       '999'
     );
     expect(mockHubspot.crm.deals.basicApi.create).not.toHaveBeenCalled();
+  });
+
+  test('recreates the clone when the ledger points to a deleted deal', async () => {
+    // Source deal exists; the recorded 2027 clone (888) was deleted → 404.
+    mockHubspot.crm.deals.basicApi.getById.mockImplementation((id: string) => {
+      if (id === '888') {
+        const err: any = new Error('not found');
+        err.code = 404;
+        return Promise.reject(err);
+      }
+      return Promise.resolve({
+        id,
+        properties: {
+          dealname: 'Acme Child | 2026',
+          pipeline: 'default',
+          dealstage: 'closedlost',
+          year1: '2026',
+          deal_key: 'CHILD123|2026',
+          associated_child_id: 'CHILD123',
+          associated_household_id: 'HH99',
+          hubspot_owner_id: 'OWNER1',
+          deal_currency_code: 'USD',
+          program_id: '1544',
+          programname: 'Camp Sunshine',
+          expertprofile: '',
+          referred_by: '',
+          split_type: '',
+          deal_split_email: '',
+          deal_split_pct: '',
+          commission_locked: 'false',
+        },
+      });
+    });
+    mockFindLedger.mockResolvedValue({
+      source_key: 'CHILD123|2026',
+      target_year: 2027,
+      new_deal_id: '888',
+      created_at: new Date(),
+    });
+    mockHubspot.crm.deals.searchApi.doSearch.mockResolvedValue({ results: [] });
+    mockHubspot.crm.deals.basicApi.create.mockResolvedValue({ id: '999' });
+
+    const result = await cloneForYear({ sourceDealId: '100', targetYear: 2027 });
+
+    // Recreated (not deduped to the phantom), stale row dropped, fresh ledger.
+    expect(result.success).toBe(true);
+    expect((result as any).deduped).toBe(false);
+    expect((result as any).newDealId).toBe('999');
+    expect(mockDeleteLedger).toHaveBeenCalledWith(mockClient, 'CHILD123|2026', 2027);
+    expect(mockHubspot.crm.deals.basicApi.create).toHaveBeenCalled();
+    expect(mockInsertLedger).toHaveBeenCalledWith(
+      mockClient,
+      'CHILD123|2026',
+      2027,
+      '999'
+    );
   });
 });
 
