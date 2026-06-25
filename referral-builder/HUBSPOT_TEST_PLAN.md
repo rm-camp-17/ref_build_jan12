@@ -51,12 +51,11 @@ Legend: 🟢 = new behavior to confirm, 🔁 = regression check (must still work
 - [ ] 🟢 Copying a note does **not** change any referral's Selected/interest state (esp. a Selected referral stays Selected, deal stays put).
 - [ ] 🔁 Editing a single referral's note normally still saves.
 
-## 6. Enrollment + referral emails at Won (item 4)
+## 6. Enrollment email at Won (item 4)
 
-- [ ] 🟢 At Closed Won, the card shows the **Enrollment & referral emails** panel (tuition, enrollment status, dates).
+- [ ] 🟢 At Closed Won, the card shows the **Enrollment email** panel (tuition, enrollment status, dates).
 - [ ] 🟢 Tick the checkbox + **Send enrollment email** → `send_enrollment_email` becomes true on the deal; within ~2 min your existing poller sends it and the card status flips to **Sent**.
-- [ ] 🟢 **Send referral email** → the deal's Selected referral's outreach status flips to ready-to-send and your separate referral-email module picks it up.
-- [ ] Confirm the referral-email trigger value matches your module (status = ready-to-send / resend). If not, tell me — it's env-overridable.
+- [ ] (Referral-email sending is intentionally NOT in this card — handled by your separate module.)
 
 ## 7. Clone is immediate, carries everything (item 1)
 

@@ -248,8 +248,8 @@ export function BillingPanel({ details }: { details: DealDetails | null }) {
 // Surfaces the deal's enrollment-email fields once program + tuition are
 // set (this view only renders at Closed Won). The checkbox + button queue
 // the selected-program (enrollment) email by setting send_enrollment_email;
-// an existing HubSpot poller sends it. A second button (re)sends the
-// referral email to the camp.
+// an existing HubSpot poller sends it. (Sending the referral email is a
+// separate module, intentionally not wired into this card.)
 
 interface EnrollmentEmailProps {
   dealId: string;
@@ -270,45 +270,36 @@ function EnrollmentEmailPanel({
   const tuition = details?.tuition_at_enrollment || null;
 
   const [sendEnroll, setSendEnroll] = useState(false);
-  const [busy, setBusy] = useState<null | "enroll" | "referral">(null);
+  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const post = useCallback(
-    async (path: string, kind: "enroll" | "referral") => {
-      setBusy(kind);
-      setError(null);
-      setMsg(null);
-      try {
-        const resp = await hubspot.fetch(`${API_BASE}${path}`, {
-          method: "POST",
-          body: JSON.stringify({}),
-        });
-        const data = await resp.json().catch(() => ({}));
-        if (resp.ok && data.success) {
-          setMsg(
-            kind === "enroll"
-              ? "Enrollment email queued — the camp will receive it shortly."
-              : `Referral email queued${
-                  typeof data.queued === "number" ? ` (${data.queued})` : ""
-                }.`
-          );
-          onChanged();
-        } else {
-          setError(data.message || "Failed to queue the email.");
-        }
-      } catch {
-        setError("Failed to queue the email. Please try again.");
-      } finally {
-        setBusy(null);
+  const sendEnrollmentEmail = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    setMsg(null);
+    try {
+      const resp = await hubspot.fetch(
+        `${API_BASE}/api/v2/deal/${dealId}/send-enrollment-email`,
+        { method: "POST", body: JSON.stringify({}) }
+      );
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok && data.success) {
+        setMsg("Enrollment email queued — the camp will receive it shortly.");
+        onChanged();
+      } else {
+        setError(data.message || "Failed to queue the email.");
       }
-    },
-    [onChanged]
-  );
+    } catch {
+      setError("Failed to queue the email. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }, [dealId, onChanged]);
 
   return (
     <Box>
-      <Heading level={3}>Enrollment &amp; referral emails</Heading>
+      <Heading level={3}>Enrollment email</Heading>
 
       <Flex direction="column" gap="xs">
         <Flex direction="row" gap="md" align="center" wrap="wrap">
@@ -331,7 +322,7 @@ function EnrollmentEmailPanel({
         name="send_enrollment_email"
         checked={sendEnroll}
         onChange={(val) => setSendEnroll(Boolean(val))}
-        readOnly={locked || queued || busy !== null}
+        readOnly={locked || queued || busy}
       >
         Send the selected-program (enrollment) email to the camp
       </Checkbox>
@@ -339,21 +330,10 @@ function EnrollmentEmailPanel({
       <Flex direction="row" gap="sm" wrap="wrap">
         <Button
           variant="primary"
-          disabled={!sendEnroll || locked || queued || busy !== null}
-          onClick={() =>
-            post(`/api/v2/deal/${dealId}/send-enrollment-email`, "enroll")
-          }
+          disabled={!sendEnroll || locked || queued || busy}
+          onClick={sendEnrollmentEmail}
         >
-          {busy === "enroll" ? "Queuing…" : "Send enrollment email"}
-        </Button>
-        <Button
-          variant="secondary"
-          disabled={locked || busy !== null}
-          onClick={() =>
-            post(`/api/v2/deal/${dealId}/send-referral-email`, "referral")
-          }
-        >
-          {busy === "referral" ? "Queuing…" : "Send referral email"}
+          {busy ? "Queuing…" : "Send enrollment email"}
         </Button>
       </Flex>
       {queued && !alreadySent && (
