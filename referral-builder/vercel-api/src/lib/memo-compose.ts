@@ -162,7 +162,17 @@ export function buildUserPrompt(camps: MemoCampInput[], ctx: MemoContext): strin
     if (camp.writeupText && camp.writeupText.trim()) {
       const kind = camp.writeupType === 'recap' ? 'CALL-NOTES / RECAP' : 'WRITE-UP';
       lines.push(`Narrative ${kind}:`);
-      lines.push(camp.writeupText.trim());
+      // Cap each camp's narrative so the prompt (and generation time) stays
+      // bounded for multi-camp memos — the recaps run several KB and the memo
+      // only summarizes them. Keeps the request under the upstream gateway
+      // timeout. Overridable via MEMO_WRITEUP_CHAR_CAP.
+      const text = camp.writeupText.trim();
+      const cap = config.memo.writeupCharCap;
+      lines.push(
+        cap > 0 && text.length > cap
+          ? text.slice(0, cap) + '\n…[truncated for length]'
+          : text
+      );
     } else {
       lines.push(
         'Narrative: (NO WRITE-UP ON FILE — mark this camp limitedInfo=true; build only from structured data; do not invent narrative)'
