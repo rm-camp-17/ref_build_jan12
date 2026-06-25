@@ -93,6 +93,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockFindLedger.mockResolvedValue(null);
   mockHubspot.crm.deals.searchApi.doSearch.mockResolvedValue({ results: [] });
+  // clearAllMocks resets calls but not implementations — reset the
+  // referral-count lookup to empty so per-test overrides don't leak.
+  mockGetAssociatedIds.mockResolvedValue([]);
 });
 
 describe('cloneForYear — locked source pre-flight', () => {
@@ -252,16 +255,31 @@ describe('cloneForYear — happy path', () => {
     expect(props.dealstage).toBe('presentationscheduled'); // recommendationPresented
   });
 
-  test('refuses when source has no deal_key (would prevent dedup)', async () => {
-    mockSourceDeal({ deal_key: '' });
+  test('clones with a derived {child}|{year} key when deal_key is blank (item 1)', async () => {
+    mockSourceDeal({ deal_key: '' }); // child id + year still present
+    mockHubspot.crm.deals.basicApi.create.mockResolvedValue({ id: '777' });
 
-    const result = await cloneForYear({
-      sourceDealId: '100',
-      targetYear: 2027,
-    });
+    const result = await cloneForYear({ sourceDealId: '100', targetYear: 2027 });
 
-    expect(result.success).toBe(false);
-    expect((result as any).message).toContain('deal_key');
-    expect(mockHubspot.crm.deals.basicApi.create).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    const props = mockHubspot.crm.deals.basicApi.create.mock.calls[0][0].properties;
+    expect(props.copied_from_deal_key).toBe('CHILD123|2026');
+    expect(mockInsertLedger).toHaveBeenCalledWith(
+      mockClient,
+      'CHILD123|2026',
+      2027,
+      '777'
+    );
+  });
+
+  test('falls back to deal:{id} key when deal_key and child id are both missing (item 1)', async () => {
+    mockSourceDeal({ deal_key: '', associated_child_id: '' });
+    mockHubspot.crm.deals.basicApi.create.mockResolvedValue({ id: '777' });
+
+    const result = await cloneForYear({ sourceDealId: '100', targetYear: 2027 });
+
+    expect(result.success).toBe(true);
+    const props = mockHubspot.crm.deals.basicApi.create.mock.calls[0][0].properties;
+    expect(props.copied_from_deal_key).toBe('deal:100');
   });
 });
