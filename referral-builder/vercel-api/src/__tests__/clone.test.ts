@@ -108,6 +108,8 @@ beforeEach(() => {
   // clearAllMocks resets calls but not implementations — reset the
   // referral-count lookup to empty so per-test overrides don't leak.
   mockGetAssociatedIds.mockResolvedValue([]);
+  mockFetchReferrals.mockReset();
+  mockFetchReferrals.mockResolvedValue([]);
 });
 
 describe('cloneForYear — locked source pre-flight', () => {
@@ -318,10 +320,14 @@ describe('cloneForYear — post-commit copy is awaited (not fire-and-forget)', (
     mockHubspot.crm.deals.basicApi.create.mockResolvedValue({ id: '777' });
     // One associated id per object type to enumerate/copy.
     mockGetAssociatedIds.mockResolvedValue(['SRC1']);
-    // One referral on the source to clone onto the new deal.
-    mockFetchReferrals.mockResolvedValue([
-      { id: 'R1', company: { id: 'C1', name: 'Camp X' }, note: 'returning camper' },
-    ]);
+    // Source ('100') has one referral; the new deal ('777') has none yet.
+    mockFetchReferrals.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === '100'
+          ? [{ id: 'R1', company: { id: 'C1', name: 'Camp X' }, note: 'returning camper' }]
+          : []
+      )
+    );
 
     await cloneForYear({ sourceDealId: '100', targetYear: 2027 });
 
@@ -346,20 +352,38 @@ describe('cloneForYear — post-commit copy is awaited (not fire-and-forget)', (
     expect(assocCalls).toContainEqual(['deals', '777', 'contacts', 'SRC1']);
   });
 
-  test('skips the copy entirely on a deduped (ledger-hit) clone', async () => {
+  test('back-fills a deduped clone idempotently — adds missing camps, no dupes', async () => {
     mockSourceDeal();
+    // Ledger already has a clone (888) from a buggy earlier run.
     mockFindLedger.mockResolvedValue({
       source_key: 'CHILD123|2026',
       target_year: 2027,
       new_deal_id: '888',
       created_at: new Date(),
     });
+    // Source has two camps (C1, C2); the existing clone already has C1.
+    mockFetchReferrals.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === '100'
+          ? [
+              { id: 'R1', company: { id: 'C1', name: 'Camp One' }, note: 'a' },
+              { id: 'R2', company: { id: 'C2', name: 'Camp Two' }, note: 'b' },
+            ]
+          : id === '888'
+          ? [{ id: 'RX', company: { id: 'C1', name: 'Camp One' }, note: 'a' }]
+          : []
+      )
+    );
 
-    await cloneForYear({ sourceDealId: '100', targetYear: 2027 });
+    const result = await cloneForYear({ sourceDealId: '100', targetYear: 2027 });
 
-    expect(mockHubspot.crm.objects.basicApi.create).not.toHaveBeenCalled();
+    expect((result as any).deduped).toBe(true);
+    expect((result as any).newDealId).toBe('888');
+    // Only the missing camp (C2) is cloned — C1 already present, not duplicated.
+    expect(mockHubspot.crm.objects.basicApi.create).toHaveBeenCalledTimes(1);
+    // The back-filled referral is linked to the existing clone (888).
     expect(
-      mockHubspot.crm.associations.v4.basicApi.createDefault
-    ).not.toHaveBeenCalled();
+      mockHubspot.crm.associations.v4.basicApi.createDefault.mock.calls
+    ).toContainEqual([config.objectTypes.referral, 'NEWREF', 'deals', '888']);
   });
 });

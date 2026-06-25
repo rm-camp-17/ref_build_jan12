@@ -362,7 +362,25 @@ async function copyReferralsToClone(
     return;
   }
 
+  // Idempotency: this runs on re-clicks / deduped clones too (to back-fill
+  // clones from before the copy was fixed), so don't recreate referrals the
+  // target already has. Dedup by camp (company id). Read once up front.
+  const existingCompanyIds = new Set<string>();
+  let targetHasReferrals = false;
+  try {
+    const existing = await fetchReferralsForDeal(newDealId);
+    targetHasReferrals = existing.length > 0;
+    for (const e of existing) if (e.company?.id) existingCompanyIds.add(e.company.id);
+  } catch {
+    /* best-effort: if we can't read the target, fall through and create */
+  }
+
   for (const ref of sourceReferrals) {
+    // Already copied (same camp on the target) — skip to avoid duplicates.
+    if (ref.company?.id && existingCompanyIds.has(ref.company.id)) continue;
+    // Company-less referrals can't be deduped; only copy them when the target
+    // has no referrals yet (a genuinely fresh clone) so re-clicks don't dupe.
+    if (!ref.company?.id && targetHasReferrals) continue;
     try {
       const properties: Record<string, string> = {
         [config.properties.referral.note]: ref.note || '',
@@ -597,12 +615,16 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
   // child) ever landed; household, parents (contacts), and the referrals never
   // ran. Awaiting keeps the function alive until the copy completes.
   //
-  // Running it here (outside the txn, post-commit) means a copy failure can't
-  // roll back the ledger, and each sub-op is best-effort. Only a freshly
-  // created clone needs this — a deduped hit already has everything. The three
-  // phases touch independent objects, so run them concurrently to keep the
-  // request snappy; each phase is internally sequential to stay rate-limit-safe.
-  if (result.success && !result.deduped) {
+  // We run this for BOTH a fresh create AND a deduped hit. Deduped is on
+  // purpose: clones created before this copy was fixed are missing their
+  // parents/household/referrals, and re-clicking "Copy to next year" is how a
+  // rep would expect to repair them. Every sub-op is idempotent — association
+  // createDefault no-ops on an existing edge, and copyReferralsToClone skips
+  // camps the target already has — so re-running never duplicates. Running
+  // post-commit (outside the txn) means a copy failure can't roll back the
+  // ledger; the three phases touch independent objects so they run concurrently
+  // while each stays internally sequential to respect HubSpot rate limits.
+  if (result.success) {
     await Promise.allSettled([
       copyAssociationsBestEffort(sourceDealId, result.newDealId),
       copyReferralsToClone(sourceDealId, result.newDealId, source, targetYear),
