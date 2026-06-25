@@ -149,8 +149,14 @@ export const config = {
     // Anthropic API key (set in Vercel). When unset, the generate-memo route
     // returns a clear error instead of attempting the call.
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
-    // Claude model used to compose the memo.
-    model: process.env.MEMO_MODEL || 'claude-opus-4-8',
+    // Claude model used to compose the memo. Defaults to Sonnet for speed —
+    // Opus is markedly slower and multi-camp memos were exceeding the upstream
+    // (HubSpot fetch) gateway timeout. Override with MEMO_MODEL=claude-opus-4-8
+    // for max prose quality if the latency is acceptable.
+    model: process.env.MEMO_MODEL || 'claude-sonnet-4-6',
+    // Per-camp narrative character cap fed to the model (0 = no cap). Bounds the
+    // prompt/generation time for multi-camp memos. The recaps run several KB.
+    writeupCharCap: Number(process.env.MEMO_WRITEUP_CHAR_CAP || '3500'),
     // Where the generated .docx is delivered. We upload to HubSpot Files and
     // attach to the deal via a note engagement. This folder path is created
     // lazily by the Files API on first upload.
