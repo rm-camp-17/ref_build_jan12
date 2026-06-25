@@ -28,6 +28,9 @@ import {
 } from './clone-ledger';
 import { getAssociatedIds } from './associations';
 import { config } from './config';
+import { fetchReferralsForDeal } from './referrals';
+import { dualWriteReferralProperty } from './property-aliases';
+import { stripProgramFromDealName } from './deals';
 
 // ============================================================================
 // Types
@@ -214,11 +217,15 @@ async function findExistingCloneInHubSpot(
 
 function buildClonePayload(
   source: SourceDeal,
-  targetYear: number
+  targetYear: number,
+  landingStage: string
 ): Record<string, string> {
-  // dealname: swap the year embedded in the source name
+  // dealname: strip any attending-program suffix (item 2) from the source
+  // name first, then swap the embedded year. Otherwise "Jane 2026 — Camp X"
+  // would clone as "Jane 2027 — Camp X" and carry last year's program.
   const sourceYear = source.year1 ?? new Date().getFullYear().toString();
-  const newDealName = source.dealname.replace(sourceYear, String(targetYear));
+  const cleanSourceName = stripProgramFromDealName(source.dealname, source.programname ?? '');
+  const newDealName = cleanSourceName.replace(sourceYear, String(targetYear));
   const newDealKey = source.associated_child_id
     ? `${source.associated_child_id}|${targetYear}`
     : '';
@@ -228,9 +235,9 @@ function buildClonePayload(
     dealname: newDealName || `Cloned for ${targetYear}`,
     year1: String(targetYear),
     pipeline: 'default',
-    // Spec open question #1: clones start at Tuition Undecided so the
-    // rep just enters tuition (camp is pre-known from source).
-    dealstage: config.stages.tuitionUndecided,
+    // Landing stage (item 1): Recommendation Plan Presented when referrals
+    // carry over (rep continues from the recommendation), else New Lead.
+    dealstage: landingStage,
     deal_key: newDealKey,
     // Lineage — primary dedup key
     copied_from_deal_key: source.deal_key ?? '',
@@ -309,6 +316,119 @@ async function copyAssociationsBestEffort(
   }
 }
 
+/**
+ * Item 1: carry the prior year's referrals onto the cloned deal. For each
+ * referral on the source deal we create a fresh referral on the new deal —
+ * same camp (company) and note — with status/interest reset for the new
+ * year and copied_from_* lineage stamped. Best-effort; one referral failing
+ * doesn't stop the others.
+ */
+async function copyReferralsToClone(
+  sourceDealId: string,
+  newDealId: string,
+  source: SourceDeal,
+  targetYear: number
+): Promise<void> {
+  let sourceReferrals;
+  try {
+    sourceReferrals = await fetchReferralsForDeal(sourceDealId);
+  } catch (err: any) {
+    console.warn(
+      `[clone] could not read referrals on source deal ${sourceDealId} (skipping referral copy):`,
+      err.message
+    );
+    return;
+  }
+
+  for (const ref of sourceReferrals) {
+    try {
+      const properties: Record<string, string> = {
+        [config.properties.referral.note]: ref.note || '',
+        [config.properties.referral.copiedDealKey]: source.deal_key ?? '',
+        [config.properties.referral.copiedYear]: source.year1 ?? '',
+        // Fresh start for the new year.
+        ...dualWriteReferralProperty('outreach', config.defaults.referralStatus),
+        ...dualWriteReferralProperty('interest', config.defaults.clientInterest),
+      };
+      if (ref.company?.id) {
+        properties[config.properties.referral.key] = `${newDealId}-${ref.company.id}`;
+      }
+
+      const created = await hubspotClient.crm.objects.basicApi.create(
+        config.objectTypes.referral,
+        { properties, associations: [] }
+      );
+
+      // Associate the new referral to the new deal (and its camp).
+      await hubspotClient.crm.associations.v4.basicApi.createDefault(
+        config.objectTypes.referral,
+        created.id,
+        'deals',
+        newDealId
+      );
+      if (ref.company?.id) {
+        try {
+          await hubspotClient.crm.associations.v4.basicApi.createDefault(
+            config.objectTypes.referral,
+            created.id,
+            'companies',
+            ref.company.id
+          );
+        } catch (err: any) {
+          console.warn(
+            `[clone] referral ${created.id} created but company assoc failed:`,
+            err.message
+          );
+        }
+      }
+    } catch (err: any) {
+      console.warn(
+        `[clone] could not copy referral ${ref.id} to new deal ${newDealId}:`,
+        err.message
+      );
+    }
+  }
+}
+
+/**
+ * Item 1: carry prior activity onto the cloned deal by associating the
+ * source deal's existing engagements (notes, calls, emails, meetings,
+ * tasks) to the new deal too. We share rather than duplicate — the same
+ * engagement shows on both deals — so the family's history travels with
+ * the renewal. Best-effort.
+ */
+async function shareActivityToClone(
+  sourceDealId: string,
+  newDealId: string
+): Promise<void> {
+  const engagementTypes = ['notes', 'calls', 'emails', 'meetings', 'tasks'];
+  for (const type of engagementTypes) {
+    try {
+      const ids = await getAssociatedIds('deals', sourceDealId, type);
+      for (const id of ids) {
+        try {
+          await hubspotClient.crm.associations.v4.basicApi.createDefault(
+            'deals',
+            newDealId,
+            type,
+            id
+          );
+        } catch (err: any) {
+          console.warn(
+            `[clone] could not share ${type} ${id} to new deal ${newDealId}:`,
+            err.message
+          );
+        }
+      }
+    } catch (err: any) {
+      console.warn(
+        `[clone] could not enumerate ${type} for source deal ${sourceDealId}:`,
+        err.message
+      );
+    }
+  }
+}
+
 // ============================================================================
 // Orchestrator
 // ============================================================================
@@ -328,6 +448,28 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
         'Source deal has no deal_key set. Cannot dedup the clone — refusing.',
     };
   }
+
+  // Item 1: pick the landing stage from whether referrals carry over.
+  // Recommendation Plan Presented when the source has referrals (the rep
+  // resumes from the recommendation), New Lead when it has none.
+  let sourceReferralCount = 0;
+  try {
+    const ids = await getAssociatedIds(
+      'deals',
+      sourceDealId,
+      config.objectTypes.referral
+    );
+    sourceReferralCount = ids.length;
+  } catch (err: any) {
+    console.warn(
+      `[clone] could not count source referrals for ${sourceDealId} (defaulting to New Lead):`,
+      err.message
+    );
+  }
+  const landingStage =
+    sourceReferralCount > 0
+      ? config.stages.recommendationPresented
+      : config.stages.newLead;
 
   // Step 1.5: locked-source pre-flight
   // If commission_locked is true, billing flagged something — making the
@@ -387,7 +529,7 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
     }
 
     // Step 3: build payload + create in HubSpot
-    const properties = buildClonePayload(source, targetYear);
+    const properties = buildClonePayload(source, targetYear, landingStage);
     let newDeal: { id: string };
     try {
       newDeal = await hubspotClient.crm.deals.basicApi.create({
@@ -406,12 +548,16 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
       `[clone] Created clone ${newDeal.id} from ${sourceDealId} for ${targetYear}`
     );
 
-    // Step 5 (after COMMIT): copy associations best-effort
-    // Doing this outside the txn means the deal is committed to the
-    // ledger before we touch associations — if association copy fails,
-    // the user retries (idempotent: ledger hit returns same deal).
+    // Step 5 (after COMMIT): copy associations, referrals, and activity
+    // best-effort. Doing this outside the txn means the deal is committed
+    // to the ledger before we touch them — if any copy fails the user
+    // retries (idempotent: ledger hit returns the same deal).
     setTimeout(() => {
-      void copyAssociationsBestEffort(sourceDealId, newDeal.id);
+      void (async () => {
+        await copyAssociationsBestEffort(sourceDealId, newDeal.id);
+        await copyReferralsToClone(sourceDealId, newDeal.id, source, targetYear);
+        await shareActivityToClone(sourceDealId, newDeal.id);
+      })();
     }, 0);
 
     return {

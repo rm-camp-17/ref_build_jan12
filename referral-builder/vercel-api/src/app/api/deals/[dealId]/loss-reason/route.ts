@@ -33,6 +33,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDeal, updateDeal } from '@/lib/deals';
 import { parseRequestBody } from '@/lib/parse-request-body';
+import { notifyPipelineFailure } from '@/lib/error-notifier';
 import {
   requireUnlocked,
   RequireUnlockedError,
@@ -127,8 +128,9 @@ export async function PATCH(
       );
     }
     // Floor: a rep entering currentYear means "wait until this year",
-    // which is a no-op. Bump it to currentYear + 1 so the auto-clone job
-    // has something to act on.
+    // which is a no-op. Bump it to currentYear + 1 so the immediate
+    // clone-to-next-year offered on the Closed Lost view targets a real
+    // future year.
     resolvedWaitUntilYear = wy === currentYear ? currentYear + 1 : wy;
   } else if (waitProvided) {
     return NextResponse.json(
@@ -199,6 +201,12 @@ export async function PATCH(
       err.message,
       err.stack
     );
+    await notifyPipelineFailure({
+      action: 'loss-reason',
+      dealId,
+      error: err?.message ?? String(err),
+      detail: `category=${category}, setStageToLost=${body.setStageToLost === true}`,
+    });
     return NextResponse.json(
       { success: false, message: 'Failed to update deal.' },
       { status: 500 }

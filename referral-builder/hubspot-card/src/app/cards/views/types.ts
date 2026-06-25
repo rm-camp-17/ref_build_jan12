@@ -88,6 +88,10 @@ export interface DealDetails {
   closed_lost_reason: string | null;
   wait_until_year: string | null;
   note_1: string | null;
+  // Enrollment-email fields (item 4)
+  send_enrollment_email: string | null;
+  enrollment_email_sent: string | null;
+  enrollment_email_sent_date: string | null;
   parent_contact_count: number;
   associated_child_count: number;
   associated_household_count: number;

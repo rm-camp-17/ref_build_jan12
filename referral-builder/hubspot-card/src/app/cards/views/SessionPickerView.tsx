@@ -191,9 +191,11 @@ function CustomSessionForm({
           method: "POST",
           body: JSON.stringify({
             description: description || "Custom session",
-            tuition: parseFloat(tuition),
+            // Send raw strings — the backend sanitizes ($, commas) and
+            // parses, so "$1,200" no longer becomes NaN and silently 400s.
+            tuition,
             currency: currency || "USD",
-            weeks: parseFloat(weeks),
+            weeks,
           }),
         }
       );

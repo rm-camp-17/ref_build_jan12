@@ -4,11 +4,5 @@
   "devCommand": "cd referral-builder/vercel-api && npm run dev",
   "installCommand": "npm install && cd referral-builder/vercel-api && npm install",
   "outputDirectory": "referral-builder/vercel-api/.next",
-  "framework": "nextjs",
-  "crons": [
-    {
-      "path": "/api/cron/auto-clone-wait-year",
-      "schedule": "0 6 * * *"
-    }
-  ]
+  "framework": "nextjs"
 }

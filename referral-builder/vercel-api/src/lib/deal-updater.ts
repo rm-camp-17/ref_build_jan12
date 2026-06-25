@@ -14,7 +14,12 @@
 import { config } from './config';
 import { getSessionById } from './sessions';
 import { getCompanyByProgramId } from './companies';
-import { updateDeal, associateDealToCompany } from './deals';
+import {
+  updateDeal,
+  associateDealToCompany,
+  getDeal,
+  reconcileDealName,
+} from './deals';
 
 // ============================================================================
 // Types
@@ -96,6 +101,10 @@ export async function selectSession(
     note_1: note,
   };
 
+  // Item 2: advancing to Closed Won with tuition entered → append the
+  // attending program to the deal name (idempotent).
+  await appendProgramSuffix(dealId, properties);
+
   await updateDeal(dealId, properties);
 
   // Associate deal to company — best-effort, don't fail the whole op
@@ -121,10 +130,13 @@ export async function selectSession(
 // ============================================================================
 
 /**
- * Apply a custom (rep-typed) session to the deal. Tuition + weeks are
- * required; description is optional. Does NOT advance the stage — the
- * deal stays at Tuition Undecided so an admin can review before the
- * camp gets billed.
+ * Apply a custom (rep-typed) "Other" session to the deal. Tuition + weeks
+ * are required; description is optional.
+ *
+ * Item 6: a custom amount now advances the deal to "Program Selected"
+ * (Closed Won) exactly like picking a listed session — previously it wrote
+ * the tuition but left the deal at Tuition Undecided, so the card reset to
+ * the picker and the rep saw nothing happen.
  */
 export async function selectCustomSession(
   dealId: string,
@@ -141,15 +153,55 @@ export async function selectCustomSession(
     // Intentionally NOT set: session_start_date, session_end_date, session_id
     // (unknown for custom sessions)
     session_name: finalDescription,
-    note_1: `CUSTOM (pending approval): ${finalDescription}`,
-    // No dealstage write — stays at Tuition Undecided
+    // Deal progression — advance to Closed Won just like a preset session.
+    closedate: new Date().toISOString().split('T')[0],
+    dealstage: config.stages.programSelected,
+    note_1: `CUSTOM session: ${finalDescription}`,
   };
+
+  // Item 2: append the attending program to the deal name (idempotent).
+  await appendProgramSuffix(dealId, properties);
 
   await updateDeal(dealId, properties);
 
   return {
     success: true,
-    message: `Custom session saved (pending office approval): ${finalDescription}`,
+    message: `Custom session selected: ${finalDescription}. Tuition: ${currency || 'USD'} $${tuition}.`,
     properties,
   };
+}
+
+// ============================================================================
+// Deal-name suffix helper (item 2)
+// ============================================================================
+
+/**
+ * Mutates `properties` to include a `dealname` with the attending program
+ * appended, when advancing a deal to Closed Won. Reads the deal's current
+ * name + programname; no-ops (and never throws) if the program is unknown
+ * or the name already carries the suffix.
+ */
+async function appendProgramSuffix(
+  dealId: string,
+  properties: Record<string, string>
+): Promise<void> {
+  try {
+    const deal = await getDeal(dealId);
+    if (!deal) return;
+    const programName = deal.programname ?? '';
+    if (!programName.trim()) return;
+    const desired = reconcileDealName({
+      currentName: deal.dealname,
+      programName,
+      shouldHaveProgram: true,
+    });
+    if (desired && desired !== (deal.dealname ?? '')) {
+      properties.dealname = desired;
+    }
+  } catch (err: any) {
+    console.warn(
+      `[deal-updater] could not append program to deal name for ${dealId} (non-fatal):`,
+      err.message
+    );
+  }
 }

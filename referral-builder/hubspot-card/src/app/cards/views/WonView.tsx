@@ -20,6 +20,7 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Divider,
   Flex,
   Heading,
@@ -71,6 +72,15 @@ export function WonView({
       <Divider />
 
       <BillingPanel details={details} />
+
+      <Divider />
+
+      <EnrollmentEmailPanel
+        dealId={dealId}
+        details={details}
+        locked={locked}
+        onChanged={onSavedReason}
+      />
 
       <Divider />
 
@@ -227,6 +237,131 @@ export function BillingPanel({ details }: { details: DealDetails | null }) {
           </Tag>
         </Flex>
       </Flex>
+    </Box>
+  );
+}
+
+// ============================================================================
+// EnrollmentEmailPanel (item 4)
+// ============================================================================
+//
+// Surfaces the deal's enrollment-email fields once program + tuition are
+// set (this view only renders at Closed Won). The checkbox + button queue
+// the selected-program (enrollment) email by setting send_enrollment_email;
+// an existing HubSpot poller sends it. A second button (re)sends the
+// referral email to the camp.
+
+interface EnrollmentEmailProps {
+  dealId: string;
+  details: DealDetails | null;
+  locked: boolean;
+  onChanged: () => void;
+}
+
+function EnrollmentEmailPanel({
+  dealId,
+  details,
+  locked,
+  onChanged,
+}: EnrollmentEmailProps) {
+  const alreadySent = details?.enrollment_email_sent === "true";
+  const queued = details?.send_enrollment_email === "true";
+  const sentDate = details?.enrollment_email_sent_date || null;
+  const tuition = details?.tuition_at_enrollment || null;
+
+  const [sendEnroll, setSendEnroll] = useState(false);
+  const [busy, setBusy] = useState<null | "enroll" | "referral">(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const post = useCallback(
+    async (path: string, kind: "enroll" | "referral") => {
+      setBusy(kind);
+      setError(null);
+      setMsg(null);
+      try {
+        const resp = await hubspot.fetch(`${API_BASE}${path}`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.success) {
+          setMsg(
+            kind === "enroll"
+              ? "Enrollment email queued — the camp will receive it shortly."
+              : `Referral email queued${
+                  typeof data.queued === "number" ? ` (${data.queued})` : ""
+                }.`
+          );
+          onChanged();
+        } else {
+          setError(data.message || "Failed to queue the email.");
+        }
+      } catch {
+        setError("Failed to queue the email. Please try again.");
+      } finally {
+        setBusy(null);
+      }
+    },
+    [onChanged]
+  );
+
+  return (
+    <Box>
+      <Heading level={3}>Enrollment &amp; referral emails</Heading>
+
+      <Flex direction="column" gap="xs">
+        <Flex direction="row" gap="md" align="center" wrap="wrap">
+          <Text format={{ fontWeight: "bold" }}>Tuition at enrollment:</Text>
+          <Text>{tuition ? `$${tuition}` : "—"}</Text>
+        </Flex>
+        <Flex direction="row" gap="md" align="center" wrap="wrap">
+          <Text format={{ fontWeight: "bold" }}>Enrollment email:</Text>
+          <Tag variant={alreadySent ? "success" : queued ? "warning" : "default"}>
+            {alreadySent ? "Sent" : queued ? "Queued" : "Not sent"}
+          </Tag>
+          {sentDate && <Text variant="microcopy">{sentDate}</Text>}
+        </Flex>
+      </Flex>
+
+      {error && <Alert variant="error">{error}</Alert>}
+      {msg && <Alert variant="success">{msg}</Alert>}
+
+      <Checkbox
+        name="send_enrollment_email"
+        checked={sendEnroll}
+        onChange={(val) => setSendEnroll(Boolean(val))}
+        readOnly={locked || queued || busy !== null}
+      >
+        Send the selected-program (enrollment) email to the camp
+      </Checkbox>
+
+      <Flex direction="row" gap="sm" wrap="wrap">
+        <Button
+          variant="primary"
+          disabled={!sendEnroll || locked || queued || busy !== null}
+          onClick={() =>
+            post(`/api/v2/deal/${dealId}/send-enrollment-email`, "enroll")
+          }
+        >
+          {busy === "enroll" ? "Queuing…" : "Send enrollment email"}
+        </Button>
+        <Button
+          variant="secondary"
+          disabled={locked || busy !== null}
+          onClick={() =>
+            post(`/api/v2/deal/${dealId}/send-referral-email`, "referral")
+          }
+        >
+          {busy === "referral" ? "Queuing…" : "Send referral email"}
+        </Button>
+      </Flex>
+      {queued && !alreadySent && (
+        <Text variant="microcopy">
+          Enrollment email is queued; HubSpot sends it within a couple of
+          minutes and updates the status here.
+        </Text>
+      )}
     </Box>
   );
 }
@@ -450,8 +585,9 @@ function CloneForYearSection({
         <Flex direction="column" gap="sm">
           <Heading level={3}>Create Deal for Next Year</Heading>
           <Text variant="microcopy">
-            Creates a new deal with the same camp, owner, and expert
-            assignment, but with tuition + session reset for the new year.
+            Creates a new deal for the new year with the same referrals,
+            associations, prior activity, camp, owner, and expert
+            assignment — tuition + session reset for the new year.
           </Text>
           <Input
             label="Target Year"

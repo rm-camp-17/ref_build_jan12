@@ -9,6 +9,7 @@
  */
 
 import { hubspotClient } from './hubspot';
+import { config } from './config';
 import {
   logSacredFieldChange,
   diffSacredFieldChanges,
@@ -81,6 +82,10 @@ const SESSION_CARD_PROPERTIES: ReadonlyArray<string> = [
   'closed_lost_category',
   'closed_lost_reason',
   'wait_until_year',
+  // Enrollment-email fields (item 4)
+  'send_enrollment_email',
+  'enrollment_email_sent',
+  'enrollment_email_sent_date',
 ];
 
 // ============================================================================
@@ -126,6 +131,10 @@ export interface DealRecord {
   closed_lost_category: string | null;
   closed_lost_reason: string | null;
   wait_until_year: string | null;
+  // Enrollment-email fields (item 4)
+  send_enrollment_email: string | null;
+  enrollment_email_sent: string | null;
+  enrollment_email_sent_date: string | null;
 }
 
 // ============================================================================
@@ -175,6 +184,9 @@ export async function getDeal(dealId: string): Promise<DealRecord | null> {
       closed_lost_category: p.closed_lost_category ?? null,
       closed_lost_reason: p.closed_lost_reason ?? null,
       wait_until_year: p.wait_until_year ?? null,
+      send_enrollment_email: p.send_enrollment_email ?? null,
+      enrollment_email_sent: p.enrollment_email_sent ?? null,
+      enrollment_email_sent_date: p.enrollment_email_sent_date ?? null,
     };
   } catch (err: any) {
     if (err?.code === 404 || err?.statusCode === 404) {
@@ -271,6 +283,101 @@ async function fetchSacredFieldsForAudit(
   } catch (err: any) {
     console.warn(
       `[deals] Could not read sacred fields for audit (deal ${dealId}):`,
+      err.message
+    );
+    return null;
+  }
+}
+
+// ============================================================================
+// Deal name ⇄ attending-program suffix (item 2)
+// ============================================================================
+//
+// When a deal reaches Closed Won (programSelected) with tuition entered, we
+// append the attending program to the deal name, e.g.
+//   "Jane Doe 2026"  →  "Jane Doe 2026 — Camp Adventure"
+// and strip it again if the deal leaves that stage. The suffix is the deal's
+// `programname`, so the strip is deterministic: we remove exactly
+// " — {programname}". reconcileDealName() is idempotent — it always rebuilds
+// from a clean base, so calling it repeatedly never double-appends.
+
+const PROGRAM_NAME_SEP = ' — ';
+
+/** Remove a known " — {programName}" suffix if the name ends with it. */
+export function stripProgramFromDealName(
+  dealName: string,
+  programName: string
+): string {
+  const base = dealName || '';
+  const program = (programName || '').trim();
+  if (!program) return base;
+  const suffix = `${PROGRAM_NAME_SEP}${program}`;
+  return base.endsWith(suffix)
+    ? base.slice(0, base.length - suffix.length).trimEnd()
+    : base;
+}
+
+/**
+ * Compute the deal name a deal *should* have for its stage.
+ *   - shouldHaveProgram=true  → "{cleanBase} — {programName}"
+ *   - shouldHaveProgram=false → "{cleanBase}"
+ * Always strips our known suffix first, so it's safe to call on any name.
+ * Returns the desired name (may equal the input — caller should skip the
+ * write when unchanged).
+ */
+export function reconcileDealName(opts: {
+  currentName: string | null;
+  programName: string | null;
+  shouldHaveProgram: boolean;
+}): string {
+  const current = opts.currentName ?? '';
+  const program = (opts.programName ?? '').trim();
+  const base = program ? stripProgramFromDealName(current, program) : current;
+  if (opts.shouldHaveProgram && program) {
+    return `${base}${PROGRAM_NAME_SEP}${program}`;
+  }
+  return base;
+}
+
+/** True when a deal should carry the program suffix: Closed Won + tuition set. */
+export function dealShouldHaveProgramSuffix(deal: {
+  dealstage: string | null;
+  tuition_at_enrollment: string | null;
+}): boolean {
+  const tuition = (deal.tuition_at_enrollment ?? '').trim();
+  return (
+    deal.dealstage === config.stages.programSelected &&
+    tuition !== '' &&
+    tuition !== '0'
+  );
+}
+
+/**
+ * Best-effort: bring a deal's name in line with its stage (append the
+ * attending program at Closed Won, strip it otherwise). Idempotent and
+ * non-throwing — used both at explicit transitions and as a self-heal on
+ * card load (catches native HubSpot stage drags the card never saw).
+ * Returns the new name if a write happened, else null.
+ */
+export async function reconcileDealNameForStage(deal: {
+  id: string;
+  dealname: string | null;
+  programname: string | null;
+  dealstage: string | null;
+  tuition_at_enrollment: string | null;
+}): Promise<string | null> {
+  const desired = reconcileDealName({
+    currentName: deal.dealname,
+    programName: deal.programname,
+    shouldHaveProgram: dealShouldHaveProgramSuffix(deal),
+  });
+  if (!desired || desired === (deal.dealname ?? '')) return null;
+  try {
+    await updateDeal(deal.id, { dealname: desired });
+    return desired;
+  } catch (err: any) {
+    console.warn(
+      `[deals] deal-name reconcile failed for ${deal.id} (non-fatal):`,
       err.message
     );
     return null;

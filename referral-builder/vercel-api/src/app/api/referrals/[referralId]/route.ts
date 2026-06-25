@@ -24,6 +24,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { updateReferralWorkflow } from '@/lib/workflow';
 import { validateUpdateReferralInput } from '@/lib/validation';
 import { parseRequestBody } from '@/lib/parse-request-body';
+import { notifyPipelineFailure } from '@/lib/error-notifier';
 import {
   requireUnlocked,
   RequireUnlockedError,
@@ -115,6 +116,12 @@ export async function PATCH(
   const result = await updateReferralWorkflow(referralId, validation.data.properties, context);
 
   if (!result.success) {
+    await notifyPipelineFailure({
+      action: 'update-referral',
+      referralId,
+      dealId: context?.dealId,
+      error: result.errors?.[0] || 'Failed to update referral',
+    });
     return NextResponse.json(
       {
         ok: false,

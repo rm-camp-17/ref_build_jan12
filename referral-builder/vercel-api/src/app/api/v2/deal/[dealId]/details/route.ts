@@ -16,7 +16,10 @@
  *   4. Drive the cross-stage <CommissionLockedBanner /> via the
  *      `commission_locked` flag.
  *
- * Wraps `getDeal()` from lib/deals.ts. Read-only — no writes here.
+ * Wraps `getDeal()` from lib/deals.ts. Mostly read-only; the one exception
+ * is a best-effort, idempotent deal-name reconcile (item 2) that keeps the
+ * attending-program suffix in sync with the stage — this self-heals deals
+ * whose stage was changed natively in HubSpot (which the card never saw).
  *
  * Response on 200:
  *   {
@@ -35,7 +38,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDeal } from '@/lib/deals';
+import { getDeal, reconcileDealNameForStage } from '@/lib/deals';
 import { getAssociatedIds } from '@/lib/associations';
 import { hubspotClient } from '@/lib/hubspot';
 import { config } from '@/lib/config';
@@ -61,6 +64,19 @@ export async function GET(
         { status: 404 }
       );
     }
+
+    // Item 2 self-heal: append the attending program to the deal name at
+    // Closed Won (tuition entered), strip it otherwise. Idempotent + best
+    // effort; only writes when the name actually diverges from the stage,
+    // so it also corrects deals dragged between stages natively in HubSpot.
+    const reconciledName = await reconcileDealNameForStage({
+      id: deal.id,
+      dealname: deal.dealname,
+      programname: deal.programname,
+      dealstage: deal.dealstage,
+      tuition_at_enrollment: deal.tuition_at_enrollment,
+    });
+    const effectiveDealName = reconciledName ?? deal.dealname;
 
     // Association lookups for SetupView checklist + ReferralTableView's
     // dealCompanies list. Done server-side because hubspot.fetch from the
@@ -96,7 +112,7 @@ export async function GET(
       associated_household_count: householdIds.length,
       associated_companies,
       id: deal.id,
-      dealname: deal.dealname,
+      dealname: effectiveDealName,
       year1: deal.year1,
       dealstage: deal.dealstage,
       pipeline: deal.pipeline,
@@ -121,6 +137,11 @@ export async function GET(
       closed_lost_reason: deal.closed_lost_reason,
       wait_until_year: deal.wait_until_year,
       note_1: deal.note_1,
+      // Enrollment-email fields (item 4) — tuition_at_enrollment is already
+      // returned above.
+      send_enrollment_email: deal.send_enrollment_email,
+      enrollment_email_sent: deal.enrollment_email_sent,
+      enrollment_email_sent_date: deal.enrollment_email_sent_date,
     });
   } catch (err: any) {
     console.error(

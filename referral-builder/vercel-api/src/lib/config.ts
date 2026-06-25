@@ -81,6 +81,14 @@ export const config = {
       programName: process.env.HS_DEAL_PROGRAM_NAME_PROP || 'programname',
       stage: 'dealstage',
       tuitionAtEnrollment: 'tuition_at_enrollment',
+      sessionName: process.env.HS_DEAL_SESSION_NAME_PROP || 'session_name',
+      // Enrollment-email fields (already exist on the Deal in portal 50530609).
+      // Checking `send_enrollment_email` triggers an existing HubSpot-side
+      // poller (every ~2 min) that sends the camp enrollment email and
+      // unchecks the box, stamping enrollment_email_sent + _date.
+      sendEnrollmentEmail: process.env.HS_DEAL_SEND_ENROLLMENT_EMAIL_PROP || 'send_enrollment_email',
+      enrollmentEmailSent: process.env.HS_DEAL_ENROLLMENT_EMAIL_SENT_PROP || 'enrollment_email_sent',
+      enrollmentEmailSentDate: process.env.HS_DEAL_ENROLLMENT_EMAIL_SENT_DATE_PROP || 'enrollment_email_sent_date',
     },
     company: {
       status: process.env.HS_COMPANY_STATUS_PROP || 'partner_status',
@@ -96,16 +104,36 @@ export const config = {
   // The historic ID `1282918770` previously stored under `closedWon` belongs to
   // the "Historic 2015-2025" pipeline and is not used by current code.
   stages: {
+    newLead: process.env.HS_STAGE_NEW_LEAD || 'appointmentscheduled',
+    introCallCompleted: process.env.HS_STAGE_INTRO_CALL || 'qualifiedtobuy',
+    // Tier 1 de-selection rollback target / clone landing stage when referrals carry over
+    recommendationPresented: process.env.HS_STAGE_RECOMMENDATION_PRESENTED || 'presentationscheduled',
     tuitionUndecided: process.env.HS_STAGE_TUITION_UNDECIDED || '1282923123',
     programSelected: process.env.HS_STAGE_PROGRAM_SELECTED || 'decisionmakerboughtin',
-    // Tier 1 de-selection rollback target
-    recommendationPresented: process.env.HS_STAGE_RECOMMENDATION_PRESENTED || 'presentationscheduled',
+    closedLost: process.env.HS_STAGE_CLOSED_LOST || 'closedlost',
   },
 
   // Default enum values (internal values, not labels)
   defaults: {
     referralStatus: 'ready_to_send',
     clientInterest: 'active_considering',
+    // Value written to sibling referrals when one program is Selected
+    // (item 5): they drop off the active list but keep their associations.
+    // Capitalized to match how the saga writes the "Selected" value.
+    clientInterestDeclined: process.env.HS_REFERRAL_INTEREST_DECLINED_VALUE || 'Declined',
+  },
+
+  // Admin alerting (item 7). When a pipeline action fails we email the
+  // admin via Resend; if RESEND_API_KEY isn't configured we fall back to
+  // creating a HubSpot task assigned to the admin owner with an immediate
+  // reminder (which generates an email).
+  notifications: {
+    adminEmail: process.env.ALERT_ADMIN_EMAIL || 'riley@campexperts.com',
+    resendApiKey: process.env.RESEND_API_KEY || '',
+    resendFrom: process.env.ALERT_FROM_EMAIL || 'alerts@campexperts.com',
+    // Riley McDonough's HubSpot owner id in portal 50530609 (fallback task assignee).
+    adminOwnerId: process.env.ALERT_ADMIN_OWNER_ID || '83628479',
+    portalId: process.env.HS_PORTAL_ID || '50530609',
   },
 } as const;
 

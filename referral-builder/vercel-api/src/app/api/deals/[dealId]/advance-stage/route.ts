@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { updateDeal } from '@/lib/deals';
 import { parseRequestBody } from '@/lib/parse-request-body';
+import { notifyPipelineFailure } from '@/lib/error-notifier';
 import {
   requireUnlocked,
   RequireUnlockedError,
@@ -102,6 +103,12 @@ export async function POST(
       err.message,
       err.stack
     );
+    await notifyPipelineFailure({
+      action: 'advance-stage',
+      dealId,
+      error: err?.message ?? String(err),
+      detail: `toStage=${toStage}`,
+    });
     return NextResponse.json(
       { success: false, message: 'Failed to update deal.' },
       { status: 500 }

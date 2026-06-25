@@ -501,6 +501,47 @@ export function ReferralTableView({
     ]
   );
 
+  // Item 8: copy one referral's "note to company" onto every other referral
+  // on this deal — people reuse the same company note. Context omits
+  // previousClientInterest on purpose so a note-only PATCH can never trip
+  // the selection/de-selection saga on a Selected referral.
+  const copyNoteToOtherReferrals = useCallback(
+    async (sourceReferralId: string, note: string) => {
+      setError(null);
+      const targets = referrals.filter((r) => r.id !== sourceReferralId);
+      if (targets.length === 0) {
+        actions?.addAlert?.({
+          type: "info",
+          message: "No other referrals on this deal to copy the note to.",
+        });
+        return;
+      }
+      try {
+        await Promise.all(
+          targets.map((r) =>
+            apiRequest(`/api/referrals/${r.id}`, {
+              method: "PATCH",
+              body: {
+                properties: { referral_note_to_company: note },
+                context: { dealId },
+              },
+            })
+          )
+        );
+        actions?.addAlert?.({
+          type: "success",
+          message: `Note copied to ${targets.length} other referral${
+            targets.length === 1 ? "" : "s"
+          }.`,
+        });
+        await loadReferrals();
+      } catch (e: any) {
+        setError(e?.message || "Failed to copy note to other referrals");
+      }
+    },
+    [apiRequest, actions, referrals, dealId, loadReferrals]
+  );
+
   // ==========================================================================
   // Effects
   // ==========================================================================
@@ -792,6 +833,8 @@ export function ReferralTableView({
                   statusOptions={statusOptions}
                   interestOptions={interestOptions}
                   onUpdate={updateReferral}
+                  onCopyNote={copyNoteToOtherReferrals}
+                  hasSiblings={referrals.length > 1}
                   busy={busy}
                   locked={locked}
                 />
@@ -931,6 +974,8 @@ interface ReferralCardProps {
   statusOptions: Option[];
   interestOptions: Option[];
   onUpdate: (id: string, properties: Record<string, string>) => Promise<void>;
+  onCopyNote: (id: string, note: string) => Promise<void>;
+  hasSiblings: boolean;
   busy: boolean;
   locked: boolean;
 }
@@ -940,6 +985,8 @@ function ReferralCard({
   statusOptions,
   interestOptions,
   onUpdate,
+  onCopyNote,
+  hasSiblings,
   busy,
   locked,
 }: ReferralCardProps) {
@@ -951,6 +998,32 @@ function ReferralCard({
   const [localNote, setLocalNote] = useState(referral.note || "");
   const [saving, setSaving] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState(false);
+  const [selecting, setSelecting] = useState(false);
+
+  const alreadySelected = referral.clientInterest === "Selected";
+
+  // Item 5: one-click "Client selected this program" — marks the referral
+  // Selected and advances the deal in a single click. Same backend as the
+  // Edit → Interest → Selected → confirm flow, just no dropdown, no confirm
+  // reload, and no referral-first dependency.
+  const handleSelectProgram = async () => {
+    setSelecting(true);
+    try {
+      await onUpdate(referral.id, { client_interest: "Selected" });
+    } finally {
+      setSelecting(false);
+    }
+  };
+
+  const [copying, setCopying] = useState(false);
+  const handleCopyNote = async () => {
+    setCopying(true);
+    try {
+      await onCopyNote(referral.id, localNote);
+    } finally {
+      setCopying(false);
+    }
+  };
 
   const hasChanges =
     localStatus !== (referral.outreachStatus || "") ||
@@ -1001,14 +1074,26 @@ function ReferralCard({
           <Text format={{ fontWeight: "bold" }}>
             {referral.company?.name || "Unknown Company"}
           </Text>
-          <Button
-            size="small"
-            variant="secondary"
-            disabled={locked}
-            onClick={() => (expanded ? handleCancel() : setExpanded(true))}
-          >
-            {expanded ? "Cancel" : "Edit"}
-          </Button>
+          <Flex direction="row" gap="sm" align="center">
+            {!alreadySelected && (
+              <Button
+                size="small"
+                variant="primary"
+                disabled={locked || busy || selecting}
+                onClick={handleSelectProgram}
+              >
+                {selecting ? "Selecting…" : "Client selected this program"}
+              </Button>
+            )}
+            <Button
+              size="small"
+              variant="secondary"
+              disabled={locked}
+              onClick={() => (expanded ? handleCancel() : setExpanded(true))}
+            >
+              {expanded ? "Cancel" : "Edit"}
+            </Button>
+          </Flex>
         </Flex>
 
         <Flex direction="row" gap="sm" align="center" wrap="wrap">
@@ -1074,6 +1159,17 @@ function ReferralCard({
               rows={6}
               readOnly={locked}
             />
+
+            {hasSiblings && !locked && (
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={busy || copying || saving || !localNote.trim()}
+                onClick={handleCopyNote}
+              >
+                {copying ? "Copying…" : "Copy note to other referrals"}
+              </Button>
+            )}
 
             {pendingConfirm ? (
               <Flex direction="row" gap="sm">

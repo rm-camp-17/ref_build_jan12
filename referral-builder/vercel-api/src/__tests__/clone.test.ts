@@ -57,9 +57,11 @@ jest.mock('../lib/clone-ledger', () => ({
 }));
 
 import { hubspotClient } from '../lib/hubspot';
+import { getAssociatedIds } from '../lib/associations';
 import { cloneForYear } from '../lib/clone';
 
 const mockHubspot = hubspotClient as any;
+const mockGetAssociatedIds = getAssociatedIds as jest.Mock;
 
 function mockSourceDeal(overrides: Record<string, string | null> = {}) {
   mockHubspot.crm.deals.basicApi.getById.mockResolvedValue({
@@ -204,7 +206,9 @@ describe('cloneForYear — happy path', () => {
     expect(props.year1).toBe('2027');
     expect(props.dealname).toBe('Acme Child | 2027');
     expect(props.pipeline).toBe('default');
-    expect(props.dealstage).toBe('1282923123'); // tuitionUndecided
+    // Item 1: no referrals on the source (getAssociatedIds mocked to []) →
+    // the clone lands at New Lead.
+    expect(props.dealstage).toBe('appointmentscheduled'); // newLead
 
     // Billing-critical fields propagated
     expect(props.expertprofile).toBe('Allison Aspis');
@@ -233,6 +237,19 @@ describe('cloneForYear — happy path', () => {
       2027,
       '777'
     );
+  });
+
+  test('lands at Recommendation Plan Presented when the source has referrals (item 1)', async () => {
+    mockSourceDeal();
+    mockHubspot.crm.deals.basicApi.create.mockResolvedValue({ id: '777' });
+    // Source has referrals → clone resumes from the recommendation stage.
+    mockGetAssociatedIds.mockResolvedValue(['REF1', 'REF2']);
+
+    const result = await cloneForYear({ sourceDealId: '100', targetYear: 2027 });
+
+    expect(result.success).toBe(true);
+    const props = mockHubspot.crm.deals.basicApi.create.mock.calls[0][0].properties;
+    expect(props.dealstage).toBe('presentationscheduled'); // recommendationPresented
   });
 
   test('refuses when source has no deal_key (would prevent dedup)', async () => {

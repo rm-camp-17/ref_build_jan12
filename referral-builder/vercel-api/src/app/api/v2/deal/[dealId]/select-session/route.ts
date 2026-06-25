@@ -19,6 +19,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { selectSession } from '@/lib/deal-updater';
 import { parseRequestBody } from '@/lib/parse-request-body';
+import { notifyPipelineFailure } from '@/lib/error-notifier';
 import {
   requireUnlocked,
   RequireUnlockedError,
@@ -87,6 +88,12 @@ export async function POST(
       err.message,
       err.stack
     );
+    await notifyPipelineFailure({
+      action: 'select-session',
+      dealId,
+      error: err?.message ?? String(err),
+      detail: `sessionId=${sessionId}`,
+    });
     return NextResponse.json(
       {
         success: false,
