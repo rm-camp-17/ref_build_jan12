@@ -394,6 +394,10 @@ describe('cloneForYear — post-commit copy is awaited (not fire-and-forget)', (
     expect(mockHubspot.crm.objects.basicApi.create.mock.calls[0][0]).toBe(
       config.objectTypes.referral
     );
+    // referral_name is REQUIRED — the create 400s without it. Guard it.
+    const refProps =
+      mockHubspot.crm.objects.basicApi.create.mock.calls[0][1].properties;
+    expect(refProps[config.properties.referral.name]).toBeTruthy();
 
     // The cloned referral is linked to the new deal — proving the copy is
     // awaited, not deferred to a setTimeout the platform would freeze.
