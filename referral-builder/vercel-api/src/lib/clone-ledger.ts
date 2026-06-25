@@ -14,12 +14,44 @@
  */
 
 import { PoolClient } from 'pg';
+import { query } from './pg';
 
 export interface CloneLedgerRow {
   source_key: string;
   target_year: number;
   new_deal_id: string;
   created_at: Date;
+}
+
+// Self-heal guard: ensure the clone_ledger table exists at most once per
+// process. Cleared implicitly on cold start (each Lambda re-ensures once).
+let _ledgerEnsured = false;
+
+/**
+ * Ensure the clone_ledger table exists. This self-heals environments where
+ * migrations/001_clone_ledger.sql was never applied to the session Postgres —
+ * without it, every clone throws `relation "clone_ledger" does not exist`.
+ *
+ * Runs via the pool (autocommit) and must be called BEFORE the clone's own
+ * transaction, so a later ROLLBACK in the clone flow can't undo the table.
+ * Idempotent (CREATE TABLE / INDEX IF NOT EXISTS) and guarded to run once per
+ * process. The DDL mirrors migrations/001_clone_ledger.sql exactly.
+ */
+export async function ensureCloneLedgerTable(): Promise<void> {
+  if (_ledgerEnsured) return;
+  await query(
+    `CREATE TABLE IF NOT EXISTS clone_ledger (
+       source_key   TEXT          NOT NULL,
+       target_year  INTEGER       NOT NULL,
+       new_deal_id  BIGINT        NOT NULL,
+       created_at   TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+       PRIMARY KEY (source_key, target_year)
+     )`
+  );
+  await query(
+    `CREATE INDEX IF NOT EXISTS clone_ledger_target_year_idx ON clone_ledger (target_year)`
+  );
+  _ledgerEnsured = true;
 }
 
 /**

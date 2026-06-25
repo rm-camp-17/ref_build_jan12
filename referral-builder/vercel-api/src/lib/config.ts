@@ -135,6 +135,25 @@ export const config = {
     adminOwnerId: process.env.ALERT_ADMIN_OWNER_ID || '83628479',
     portalId: process.env.HS_PORTAL_ID || '50530609',
   },
+
+  // Memo builder — generates a client-facing Word doc of camp recommendations
+  // from the deal's associated companies (camps), using Claude to compose the
+  // narrative from each camp's write-up + structured session data.
+  memo: {
+    // Anthropic API key (set in Vercel). When unset, the generate-memo route
+    // returns a clear error instead of attempting the call.
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
+    // Claude model used to compose the memo.
+    model: process.env.MEMO_MODEL || 'claude-opus-4-8',
+    // Where the generated .docx is delivered. We upload to HubSpot Files and
+    // attach to the deal via a note engagement. This folder path is created
+    // lazily by the Files API on first upload.
+    filesFolderPath: process.env.MEMO_FILES_FOLDER || 'camp-recommendation-memos',
+    // Write-up source selector: 'seed' reads the committed data/writeups.json
+    // (default — zero runtime setup); 'db' reads a camp_writeups table from the
+    // session Postgres; 'auto' tries db then falls back to seed.
+    writeupSource: process.env.MEMO_WRITEUP_SOURCE || 'seed',
+  },
 } as const;
 
 // ============================================================================

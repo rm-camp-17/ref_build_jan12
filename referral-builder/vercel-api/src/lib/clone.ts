@@ -25,6 +25,7 @@ import {
   findCloneLedger,
   insertCloneLedger,
   buildIdempotencyKey,
+  ensureCloneLedgerTable,
 } from './clone-ledger';
 import { getAssociatedIds } from './associations';
 import { config } from './config';
@@ -500,6 +501,20 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
   }
 
   const idempotencyKey = buildIdempotencyKey(sourceKey, targetYear);
+
+  // Self-heal the dedup table before opening the clone transaction. Without
+  // this, environments where migration 001 was never applied throw
+  // `relation "clone_ledger" does not exist` on every clone. Best-effort: if
+  // the CREATE can't run (e.g. no DDL grant) we still proceed — the SELECT
+  // below will surface the real error.
+  try {
+    await ensureCloneLedgerTable();
+  } catch (err: any) {
+    console.warn(
+      `[clone] could not ensure clone_ledger table (continuing):`,
+      err?.message ?? err
+    );
+  }
 
   // Step 2: race-safe dedup + create inside one transaction
   return withTransaction(async (client): Promise<CloneResult> => {
