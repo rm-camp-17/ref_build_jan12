@@ -237,14 +237,69 @@ describe('POST generate-memo (start a job)', () => {
       expect.objectContaining({ action: 'generate-memo', dealId: '100' })
     );
   });
+
+  test('memo delivered but every status write fails → notifies, never downgrades to error', async () => {
+    // The memo was uploaded + attached to the deal, but persisting 'done'
+    // keeps failing. We must NOT mark the job 'error' (that would report a
+    // delivered memo as a failure); we retry, then alert.
+    mockMarkDone.mockRejectedValue(new Error('pg connection reset'));
+    const res = await POST(postReq({ companyIds: ['c1'] }), { params: { dealId: '100' } });
+    expect(res.status).toBe(200);
+
+    await runBackground();
+    expect(mockDeliver).toHaveBeenCalled(); // the memo did get delivered
+    expect(mockMarkDone).toHaveBeenCalledTimes(3); // retried before giving up
+    expect(mockMarkError).not.toHaveBeenCalled(); // never downgraded to error
+    expect(mockNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'generate-memo',
+        dealId: '100',
+        error: expect.stringContaining('status write failed'),
+      })
+    );
+  });
 });
 
 describe('GET generate-memo (poll status)', () => {
-  test('pending → status pending', async () => {
-    mockGetJob.mockResolvedValue({ id: 'job-1', deal_id: '100', status: 'pending' });
+  test('pending (recent) → status pending', async () => {
+    mockGetJob.mockResolvedValue({
+      id: 'job-1',
+      deal_id: '100',
+      status: 'pending',
+      created_at: new Date(),
+    });
     const res = await GET(getReq('job-1'), { params: { dealId: '100' } });
     expect(res.status).toBe(200);
     expect((await res.json()).status).toBe('pending');
+  });
+
+  test('pending but stale (worker died) → terminal error', async () => {
+    mockGetJob.mockResolvedValue({
+      id: 'job-1',
+      deal_id: '100',
+      status: 'pending',
+      created_at: new Date(Date.now() - 10 * 60 * 1000), // 10 min ago
+    });
+    const res = await GET(getReq('job-1'), { params: { dealId: '100' } });
+    const json: any = await res.json();
+    expect(json.status).toBe('error');
+    expect(json.message).toMatch(/timed out/i);
+  });
+
+  test('404 when the job belongs to a different deal (no cross-deal leak)', async () => {
+    mockGetJob.mockResolvedValue({
+      id: 'job-1',
+      deal_id: '999', // job belongs to another deal
+      status: 'done',
+      file_url: 'https://files.example/secret.docx',
+      camps_included: JSON.stringify(['Secret Camp']),
+      limited_info: '[]',
+    });
+    const res = await GET(getReq('job-1'), { params: { dealId: '100' } });
+    expect(res.status).toBe(404);
+    const json: any = await res.json();
+    expect(json.fileUrl).toBeUndefined();
+    expect(JSON.stringify(json)).not.toContain('Secret Camp');
   });
 
   test('done → returns file url + parsed camp lists', async () => {

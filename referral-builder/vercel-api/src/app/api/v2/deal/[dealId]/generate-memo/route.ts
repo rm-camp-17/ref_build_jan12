@@ -41,6 +41,7 @@ import {
   getMemoJob,
   markMemoJobDone,
   markMemoJobError,
+  type MemoJobResult,
 } from '@/lib/memo-jobs';
 import {
   requireDealAuthorization,
@@ -98,6 +99,7 @@ async function runMemoJob(
   companyIds: string[],
   specialInstructions: string
 ): Promise<void> {
+  let result: MemoJobResult;
   try {
     const deal = await getDeal(dealId);
     if (!deal) throw new Error('Deal not found.');
@@ -164,14 +166,15 @@ async function runMemoJob(
     } camp(s): ${camps.map((c) => c.name).join(', ')}.`;
     const delivered = await deliverMemoToDeal(dealId, buffer, fileName, noteBody);
 
-    await markMemoJobDone(jobId, {
+    result = {
       fileUrl: delivered.url,
       fileName,
       noteId: delivered.noteId,
       campsIncluded: camps.map((c) => c.name),
       limitedInfoCamps,
-    });
+    };
   } catch (err: any) {
+    // Building/delivering the memo failed — record the real reason for the card.
     const message =
       err instanceof MemoComposeError
         ? err.message
@@ -188,6 +191,32 @@ async function runMemoJob(
       detail: `job=${jobId} companies=${companyIds.join(',')}`,
     }).catch(() => {});
     await markMemoJobError(jobId, message).catch(() => {});
+    return;
+  }
+
+  // The memo is delivered (attached to the deal). Record success with a couple
+  // retries — and NEVER downgrade a delivered memo to 'error' just because the
+  // status write blipped, or we'd report a delivered memo as a failure.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await markMemoJobDone(jobId, result);
+      return;
+    } catch (e: any) {
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 300 * attempt));
+        continue;
+      }
+      console.error(
+        `[v2/generate-memo] job ${jobId} delivered but final status write failed:`,
+        e?.message
+      );
+      await notifyPipelineFailure({
+        action: 'generate-memo',
+        dealId,
+        error: `memo delivered but status write failed: ${e?.message ?? e}`,
+        detail: `job=${jobId}`,
+      }).catch(() => {});
+    }
   }
 }
 
@@ -305,7 +334,9 @@ export async function GET(
     return NextResponse.json({ success: true, status: 'pending' });
   }
 
-  if (!job) {
+  // Object-level auth: a job may only be read through the deal it belongs to.
+  // 404 (not 403) so we don't confirm a foreign job's existence.
+  if (!job || job.deal_id !== dealId) {
     return NextResponse.json(
       { success: false, status: 'unknown', message: 'Memo job not found.' },
       { status: 404 }
@@ -313,6 +344,18 @@ export async function GET(
   }
 
   if (job.status === 'pending') {
+    // Reaper: if a job has been pending past the worker's max lifetime
+    // (maxDuration + buffer), the worker died (crash / killed at the limit) and
+    // it will never finish — report a terminal error so the card stops waiting.
+    const ageMs = Date.now() - new Date(job.created_at).getTime();
+    if (ageMs > (maxDuration + 60) * 1000) {
+      return NextResponse.json({
+        success: false,
+        status: 'error',
+        message:
+          'Memo generation timed out. Please try again — if a file was attached to the deal, it may have finished anyway.',
+      });
+    }
     return NextResponse.json({ success: true, status: 'pending' });
   }
   if (job.status === 'error') {
