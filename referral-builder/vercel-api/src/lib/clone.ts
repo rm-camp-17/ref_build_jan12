@@ -380,9 +380,10 @@ function buildClonedReferralName(dealName: string, companyName?: string): string
 /**
  * Item 1: carry the prior year's referrals onto the cloned deal. For each
  * referral on the source deal we create a fresh referral on the new deal —
- * same camp (company) and note — with status/interest reset for the new
- * year and copied_from_* lineage stamped. Best-effort; one referral failing
- * doesn't stop the others.
+ * same camp (company) and note, with status defaulting to "Don’t send
+ * (already sent)" and interest to "Active / considering" for the new year, and
+ * copied_from_* lineage stamped. Best-effort; one referral failing doesn't
+ * stop the others.
  */
 async function copyReferralsToClone(
   sourceDealId: string,
@@ -437,7 +438,9 @@ async function copyReferralsToClone(
         [config.properties.referral.note]: ref.note || '',
         [config.properties.referral.copiedDealKey]: source.deal_key ?? '',
         [config.properties.referral.copiedYear]: source.year1 ?? '',
-        // Fresh start for the new year.
+        // Copied referrals always land as "Don’t send (already sent)" /
+        // "Active / considering" for the new year (config.defaults — exact
+        // option values for this portal; the old snake_case values 400'd).
         ...dualWriteReferralProperty('outreach', config.defaults.referralStatus),
         ...dualWriteReferralProperty('interest', config.defaults.clientInterest),
       };

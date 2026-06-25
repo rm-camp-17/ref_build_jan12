@@ -113,10 +113,16 @@ export const config = {
     closedLost: process.env.HS_STAGE_CLOSED_LOST || 'closedlost',
   },
 
-  // Default enum values (internal values, not labels)
+  // Default enum values
   defaults: {
-    referralStatus: 'ready_to_send',
-    clientInterest: 'active_considering',
+    // Stamped on referrals copied to a clone (Closed Lost → next year). These
+    // MUST be exact option values for this portal's referral_status /
+    // client_interest properties — the earlier snake_case values 400'd with
+    // INVALID_OPTION. Copied referrals default to "already sent" (the new
+    // year's outreach hasn't happened yet) and "active / considering".
+    // "Don’t" uses a curly apostrophe (U+2019) — the literal option value.
+    referralStatus: process.env.HS_REFERRAL_CLONE_STATUS || 'Don’t send (already sent)',
+    clientInterest: process.env.HS_REFERRAL_CLONE_INTEREST || 'Active / considering',
     // Value written to sibling referrals when one program is Selected
     // (item 5): they drop off the active list but keep their associations.
     // Capitalized to match how the saga writes the "Selected" value.
