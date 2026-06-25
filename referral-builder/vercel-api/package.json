@@ -15,6 +15,7 @@
     "@anthropic-ai/sdk": "^0.106.0",
     "@hubspot/api-client": "^11.2.0",
     "@types/pg": "^8.20.0",
+    "@vercel/functions": "^3.7.3",
     "docx": "^9.7.1",
     "next": "^14.1.0",
     "pg": "^8.20.0",
