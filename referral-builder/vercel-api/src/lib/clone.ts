@@ -264,6 +264,11 @@ function buildClonePayload(
     // Owner + currency — preserve
     hubspot_owner_id: source.hubspot_owner_id ?? '',
     deal_currency_code: source.deal_currency_code ?? 'USD',
+    // Child / household linkage — preserve the FK properties so the kid and
+    // household stay attached even if the live-association copy below hiccups
+    // (the card reads both the property and live associations).
+    associated_child_id: source.associated_child_id ?? '',
+    associated_household_id: source.associated_household_id ?? '',
     // Billing-critical (Rule 2 fields) — propagate
     expertprofile: source.expertprofile ?? '',
     referred_by: source.referred_by ?? '',
@@ -517,7 +522,7 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
   }
 
   // Step 2: race-safe dedup + create inside one transaction
-  return withTransaction(async (client): Promise<CloneResult> => {
+  const result = await withTransaction(async (client): Promise<CloneResult> => {
     await acquireCloneLock(client, idempotencyKey);
 
     // 2a: ledger check (definitive)
@@ -576,18 +581,6 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
       `[clone] Created clone ${newDeal.id} from ${sourceDealId} for ${targetYear}`
     );
 
-    // Step 5 (after COMMIT): copy associations, referrals, and activity
-    // best-effort. Doing this outside the txn means the deal is committed
-    // to the ledger before we touch them — if any copy fails the user
-    // retries (idempotent: ledger hit returns the same deal).
-    setTimeout(() => {
-      void (async () => {
-        await copyAssociationsBestEffort(sourceDealId, newDeal.id);
-        await copyReferralsToClone(sourceDealId, newDeal.id, source, targetYear);
-        await shareActivityToClone(sourceDealId, newDeal.id);
-      })();
-    }, 0);
-
     return {
       success: true,
       deduped: false,
@@ -595,4 +588,27 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
       newDealName: properties.dealname,
     };
   });
+
+  // Step 5 (AFTER COMMIT): copy associations (child, household, parents,
+  // companies), clone the prior year's referrals, and share activity onto the
+  // new deal. This MUST be awaited. A prior version fired it in setTimeout(0)
+  // after the response had already returned — but Vercel freezes the function
+  // the moment the response is sent, so only the very first association (the
+  // child) ever landed; household, parents (contacts), and the referrals never
+  // ran. Awaiting keeps the function alive until the copy completes.
+  //
+  // Running it here (outside the txn, post-commit) means a copy failure can't
+  // roll back the ledger, and each sub-op is best-effort. Only a freshly
+  // created clone needs this — a deduped hit already has everything. The three
+  // phases touch independent objects, so run them concurrently to keep the
+  // request snappy; each phase is internally sequential to stay rate-limit-safe.
+  if (result.success && !result.deduped) {
+    await Promise.allSettled([
+      copyAssociationsBestEffort(sourceDealId, result.newDealId),
+      copyReferralsToClone(sourceDealId, result.newDealId, source, targetYear),
+      shareActivityToClone(sourceDealId, result.newDealId),
+    ]);
+  }
+
+  return result;
 }

@@ -23,6 +23,11 @@ jest.mock('../lib/hubspot', () => ({
           doSearch: jest.fn(),
         },
       },
+      objects: {
+        basicApi: {
+          create: jest.fn().mockResolvedValue({ id: 'NEWREF' }),
+        },
+      },
       associations: {
         v4: {
           basicApi: {
@@ -36,6 +41,11 @@ jest.mock('../lib/hubspot', () => ({
 
 jest.mock('../lib/associations', () => ({
   getAssociatedIds: jest.fn().mockResolvedValue([]),
+}));
+
+const mockFetchReferrals = jest.fn().mockResolvedValue([]);
+jest.mock('../lib/referrals', () => ({
+  fetchReferralsForDeal: (...args: unknown[]) => mockFetchReferrals(...args),
 }));
 
 const mockClient = {
@@ -60,6 +70,7 @@ jest.mock('../lib/clone-ledger', () => ({
 import { hubspotClient } from '../lib/hubspot';
 import { getAssociatedIds } from '../lib/associations';
 import { cloneForYear } from '../lib/clone';
+import { config } from '../lib/config';
 
 const mockHubspot = hubspotClient as any;
 const mockGetAssociatedIds = getAssociatedIds as jest.Mock;
@@ -282,5 +293,73 @@ describe('cloneForYear — happy path', () => {
     expect(result.success).toBe(true);
     const props = mockHubspot.crm.deals.basicApi.create.mock.calls[0][0].properties;
     expect(props.copied_from_deal_key).toBe('deal:100');
+  });
+
+  test('preserves the child + household FK properties on the clone', async () => {
+    mockSourceDeal();
+    mockHubspot.crm.deals.basicApi.create.mockResolvedValue({ id: '777' });
+
+    await cloneForYear({ sourceDealId: '100', targetYear: 2027 });
+
+    const props = mockHubspot.crm.deals.basicApi.create.mock.calls[0][0].properties;
+    expect(props.associated_child_id).toBe('CHILD123');
+    expect(props.associated_household_id).toBe('HH99');
+  });
+});
+
+describe('cloneForYear — post-commit copy is awaited (not fire-and-forget)', () => {
+  // Regression guard: a prior version copied associations/referrals/activity in
+  // a setTimeout(0) AFTER returning the response. Vercel freezes the function
+  // once the response is sent, so only the first association (the child) landed
+  // — household, parents, and referrals silently vanished. The copy must run
+  // (and complete) before cloneForYear resolves.
+  test('copies associations + clones referrals before resolving', async () => {
+    mockSourceDeal();
+    mockHubspot.crm.deals.basicApi.create.mockResolvedValue({ id: '777' });
+    // One associated id per object type to enumerate/copy.
+    mockGetAssociatedIds.mockResolvedValue(['SRC1']);
+    // One referral on the source to clone onto the new deal.
+    mockFetchReferrals.mockResolvedValue([
+      { id: 'R1', company: { id: 'C1', name: 'Camp X' }, note: 'returning camper' },
+    ]);
+
+    await cloneForYear({ sourceDealId: '100', targetYear: 2027 });
+
+    // The referral was cloned onto the new deal (copyReferralsToClone ran).
+    expect(mockHubspot.crm.objects.basicApi.create).toHaveBeenCalledTimes(1);
+    expect(mockHubspot.crm.objects.basicApi.create.mock.calls[0][0]).toBe(
+      config.objectTypes.referral
+    );
+
+    // The cloned referral is linked to the new deal — proving the copy is
+    // awaited, not deferred to a setTimeout the platform would freeze.
+    const assocCalls =
+      mockHubspot.crm.associations.v4.basicApi.createDefault.mock.calls;
+    expect(assocCalls).toContainEqual([
+      config.objectTypes.referral,
+      'NEWREF',
+      'deals',
+      '777',
+    ]);
+    // Deal→child/household/contacts/companies associations were copied too.
+    expect(assocCalls).toContainEqual(['deals', '777', config.objectTypes.child, 'SRC1']);
+    expect(assocCalls).toContainEqual(['deals', '777', 'contacts', 'SRC1']);
+  });
+
+  test('skips the copy entirely on a deduped (ledger-hit) clone', async () => {
+    mockSourceDeal();
+    mockFindLedger.mockResolvedValue({
+      source_key: 'CHILD123|2026',
+      target_year: 2027,
+      new_deal_id: '888',
+      created_at: new Date(),
+    });
+
+    await cloneForYear({ sourceDealId: '100', targetYear: 2027 });
+
+    expect(mockHubspot.crm.objects.basicApi.create).not.toHaveBeenCalled();
+    expect(
+      mockHubspot.crm.associations.v4.basicApi.createDefault
+    ).not.toHaveBeenCalled();
   });
 });
