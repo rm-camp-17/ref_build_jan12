@@ -23,11 +23,13 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Divider,
   EmptyState,
   Flex,
   Heading,
   Input,
+  Link,
   LoadingSpinner,
   Select,
   StepIndicator,
@@ -833,6 +835,13 @@ export function ReferralTableView({
         onCopyReferral={handleCopyReferral}
       />
 
+      <MemoBuilderSection
+        dealId={dealId}
+        companies={dealCompanies}
+        locked={locked}
+        actions={actions}
+      />
+
       <Divider />
       <Flex direction="row" gap="sm">
         <Button variant="destructive" onClick={onMarkLost} disabled={locked}>
@@ -840,6 +849,187 @@ export function ReferralTableView({
         </Button>
       </Flex>
     </Flex>
+  );
+}
+
+// ============================================================================
+// Memo Builder — generate a client-facing camp recommendation Word doc
+// ============================================================================
+
+interface MemoBuilderSectionProps {
+  dealId: string;
+  companies: DealCompany[];
+  locked: boolean;
+  actions?: any;
+}
+
+interface MemoResult {
+  fileUrl: string | null;
+  fileName?: string;
+  campsIncluded: string[];
+  limitedInfoCamps: string[];
+}
+
+function MemoBuilderSection({
+  dealId,
+  companies,
+  locked,
+  actions,
+}: MemoBuilderSectionProps) {
+  // Default to including every associated camp; the rep unticks any to exclude.
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [instructions, setInstructions] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<MemoResult | null>(null);
+
+  // Seed/refresh the selection map when the company list changes (default on).
+  useEffect(() => {
+    setSelected((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const c of companies) {
+        next[c.id] = c.id in prev ? prev[c.id] : true;
+      }
+      return next;
+    });
+  }, [companies]);
+
+  const selectedIds = companies
+    .map((c) => c.id)
+    .filter((id) => selected[id]);
+
+  const generate = useCallback(async () => {
+    if (selectedIds.length === 0) {
+      setError("Select at least one camp for the memo.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const resp = await hubspot.fetch(
+        `${API_BASE}/api/v2/deal/${dealId}/generate-memo`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            companyIds: selectedIds,
+            specialInstructions: instructions || undefined,
+          }),
+        }
+      );
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok && data?.success) {
+        setResult({
+          fileUrl: data.fileUrl ?? null,
+          fileName: data.fileName,
+          campsIncluded: data.campsIncluded ?? [],
+          limitedInfoCamps: data.limitedInfoCamps ?? [],
+        });
+        actions?.addAlert?.({
+          type: "success",
+          message: "Memo generated and attached to the deal.",
+        });
+      } else {
+        setError(data?.message || "Failed to generate the memo.");
+      }
+    } catch (e: any) {
+      setError(e?.message || "Failed to generate the memo.");
+    } finally {
+      setBusy(false);
+    }
+  }, [dealId, selectedIds, instructions, actions]);
+
+  return (
+    <Box>
+      <Divider />
+      <Heading level={3}>Generate Memo</Heading>
+      <Text variant="microcopy">
+        Build a client-ready Word document of camp recommendations from the
+        camps below. It's composed by AI from each camp's write-up and our
+        session data, then attached to this deal.
+      </Text>
+
+      {companies.length === 0 ? (
+        <EmptyState title="No camps yet" layout="vertical">
+          <Text>Add referrals first — the memo is built from this deal's camps.</Text>
+        </EmptyState>
+      ) : (
+        <Flex direction="column" gap="sm">
+          <Text format={{ fontWeight: "bold" }}>Camps to include</Text>
+          {companies.map((c) => (
+            <Checkbox
+              key={c.id}
+              name={`memo-${c.id}`}
+              checked={Boolean(selected[c.id])}
+              onChange={(val: boolean) =>
+                setSelected((prev) => ({ ...prev, [c.id]: Boolean(val) }))
+              }
+              readOnly={locked || busy}
+            >
+              {c.name || c.id}
+            </Checkbox>
+          ))}
+
+          <TextArea
+            name="memo-instructions"
+            label="Special instructions (optional)"
+            value={instructions}
+            onChange={(val: string) => setInstructions(val)}
+            rows={4}
+            readOnly={locked || busy}
+            placeholder={
+              "EXAMPLE: The Conway family. Sons Archie (rising 5th) and Luke (rising 3rd). Co-ed strongly preferred; Luke has had croup, so call out medical setups. Keep it warm and concise."
+            }
+          />
+
+          {error && (
+            <Alert title="Error" variant="error">
+              {error}
+            </Alert>
+          )}
+
+          {result && (
+            <Alert title="Memo ready" variant="success">
+              <Flex direction="column" gap="sm">
+                <Text>
+                  Generated for {result.campsIncluded.length} camp
+                  {result.campsIncluded.length === 1 ? "" : "s"} and attached to
+                  this deal.
+                </Text>
+                {result.fileUrl && (
+                  <Link href={result.fileUrl} external>
+                    Download the memo (.docx)
+                  </Link>
+                )}
+                {result.limitedInfoCamps.length > 0 && (
+                  <Text variant="microcopy">
+                    Limited info (no write-up on file) — review before sending:{" "}
+                    {result.limitedInfoCamps.join(", ")}.
+                  </Text>
+                )}
+              </Flex>
+            </Alert>
+          )}
+
+          {busy && (
+            <LoadingSpinner
+              label="Generating memo… this can take up to a minute."
+              size="small"
+            />
+          )}
+
+          <Flex direction="row" gap="sm">
+            <Button
+              variant="primary"
+              disabled={locked || busy || selectedIds.length === 0}
+              onClick={generate}
+            >
+              {busy ? "Generating…" : "Generate Memo"}
+            </Button>
+          </Flex>
+        </Flex>
+      )}
+    </Box>
   );
 }
 
