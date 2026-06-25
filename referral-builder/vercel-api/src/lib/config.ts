@@ -12,6 +12,11 @@
 export const config = {
   hubspot: {
     accessToken: process.env.HUBSPOT_ACCESS_TOKEN || '',
+    // Optional dedicated token used ONLY for the memo's HubSpot Files upload.
+    // Set this to a token whose app has the `files` scope (e.g. the Camp
+    // Referral Builder app's static token) so you don't have to add `files` to
+    // — or risk — the main access token. Falls back to accessToken when unset.
+    filesToken: process.env.HUBSPOT_FILES_TOKEN || '',
   },
 
   // Custom object type identifiers
