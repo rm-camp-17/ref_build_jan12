@@ -24,6 +24,8 @@ jest.mock('../lib/config', () => ({
     memo: {
       anthropicApiKey: 'test-key',
       model: 'claude-opus-4-8',
+      effort: 'medium',
+      writeupCharCap: 3500,
       filesFolderPath: 'f',
       writeupSource: 'seed',
     },
@@ -42,6 +44,8 @@ const camps: MemoCampInput[] = [
   {
     companyId: 'c1',
     name: 'Chestnut Lake',
+    location: 'Beach Lake, PA',
+    website: 'https://www.chestnutlakecamp.com',
     writeupText: 'A traditional Wayne County camp.',
     writeupType: 'writeup',
     sessions: [
@@ -61,6 +65,8 @@ const camps: MemoCampInput[] = [
   {
     companyId: 'c2',
     name: 'Timber Lake West',
+    location: 'Roscoe, NY',
+    website: '',
     writeupText: null,
     writeupType: null,
     sessions: [],
@@ -93,25 +99,26 @@ const GOOD_MEMO = {
   summaries: [
     {
       camp: 'Chestnut Lake',
-      header: 'Chestnut Lake — Beach Lake, PA',
-      limitedInfo: false,
-      lines: [{ label: "Why it's here", text: 'Traditional Wayne County camp.' }],
+      theFeel: 'A warm, traditional Wayne County camp with a broad activity menu.',
+      knownFor: 'Classic camp staples and a strong returning community.',
     },
   ],
 };
 
 describe('buildUserPrompt', () => {
-  test('includes each camp, the session data, and the special instructions', () => {
+  test('includes each camp, its location, the session data, and the instructions', () => {
     const prompt = buildUserPrompt(camps, ctx);
     expect(prompt).toContain('Chestnut Lake');
+    expect(prompt).toContain('Beach Lake, PA'); // location fed from our records
     expect(prompt).toContain('3 weeks');
     expect(prompt).toContain('USD 9000');
     expect(prompt).toContain('Keep it warm and concise.');
   });
 
-  test('flags a camp with no write-up as LIMITED INFO', () => {
+  test('handles a camp with no write-up without flagging it negatively', () => {
     const prompt = buildUserPrompt(camps, ctx);
-    expect(prompt).toMatch(/NO WRITE-UP ON FILE/i);
+    expect(prompt).toMatch(/none on file/i);
+    expect(prompt).not.toMatch(/limited info/i);
     expect(prompt).toContain('Timber Lake West');
   });
 });
@@ -128,7 +135,12 @@ describe('composeMemo', () => {
     const memo = await composeMemo(camps, ctx);
     expect(memo.title).toBe('Camp Experts');
     expect(memo.table).toHaveLength(1);
-    expect(memo.summaries[0].header).toContain('Chestnut Lake');
+    expect(memo.summaries[0].camp).toBe('Chestnut Lake');
+    expect(memo.summaries[0].theFeel).toMatch(/traditional/i);
+    expect(memo.summaries[0].knownFor).toBeTruthy();
+    // Location + website are threaded in from the company record, not the model.
+    expect(memo.summaries[0].location).toBe('Beach Lake, PA');
+    expect(memo.summaries[0].website).toBe('https://www.chestnutlakecamp.com');
   });
 
   test('throws on empty camp list', async () => {

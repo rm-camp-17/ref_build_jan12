@@ -154,11 +154,15 @@ export const config = {
     // Anthropic API key (set in Vercel). When unset, the generate-memo route
     // returns a clear error instead of attempting the call.
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
-    // Claude model used to compose the memo. Defaults to Sonnet for speed —
-    // Opus is markedly slower and multi-camp memos were exceeding the upstream
-    // (HubSpot fetch) gateway timeout. Override with MEMO_MODEL=claude-opus-4-8
-    // for max prose quality if the latency is acceptable.
-    model: process.env.MEMO_MODEL || 'claude-sonnet-4-6',
+    // Claude model used to compose the memo. Defaults to Opus for prose
+    // quality — memo generation is asynchronous now (job + poll), so the old
+    // HubSpot-fetch gateway timeout no longer constrains the model. Override
+    // with MEMO_MODEL=claude-sonnet-4-6 if you want lower latency.
+    model: process.env.MEMO_MODEL || 'claude-opus-4-8',
+    // Reasoning effort for the composer. 'medium' keeps Opus comfortably under
+    // the function's maxDuration for multi-camp memos while still producing
+    // strong prose; bump to 'high' if you accept the extra latency.
+    effort: process.env.MEMO_EFFORT || 'medium',
     // Per-camp narrative character cap fed to the model (0 = no cap). Bounds the
     // prompt/generation time for multi-camp memos. The recaps run several KB.
     writeupCharCap: Number(process.env.MEMO_WRITEUP_CHAR_CAP || '3500'),
