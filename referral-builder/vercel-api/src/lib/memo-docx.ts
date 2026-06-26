@@ -21,7 +21,7 @@ import {
   VerticalAlign,
   WidthType,
 } from 'docx';
-import type { ComposedMemo, MemoTableRow, MemoSummary } from './memo-compose';
+import type { ComposedMemo, MemoTableRow, MemoSummary, MemoFact } from './memo-compose';
 import { memoLogoBuffer, MEMO_LOGO_WIDTH, MEMO_LOGO_HEIGHT } from './memo-logo';
 
 // Camp Experts house palette.
@@ -282,6 +282,29 @@ function summarySection(label: string, text: string): Paragraph {
   });
 }
 
+/** "The Facts": a short, scannable list of concrete attributes. */
+function factsSection(facts: MemoFact[]): Paragraph[] {
+  const out: Paragraph[] = [
+    new Paragraph({
+      spacing: { after: 30 },
+      children: [new TextRun({ text: 'The Facts', bold: true, size: 21, color: ACCENT })],
+    }),
+  ];
+  for (const f of facts) {
+    out.push(
+      new Paragraph({
+        spacing: { after: 20 },
+        indent: { left: 200 },
+        children: [
+          new TextRun({ text: `${f.label}:  `, bold: true, size: 20, color: INK }),
+          new TextRun({ text: f.value, size: 20, color: MUTED }),
+        ],
+      })
+    );
+  }
+  return out;
+}
+
 /** Build the document model and pack it to a .docx Buffer. */
 export async function renderMemoDocx(memo: ComposedMemo): Promise<Buffer> {
   const children: Array<Paragraph | Table> = [];
@@ -318,6 +341,7 @@ export async function renderMemoDocx(memo: ComposedMemo): Promise<Buffer> {
       children.push(...summaryHeader(s, rowByCamp.get(normKey(s.camp))));
       if (s.theFeel) children.push(summarySection('The feel', s.theFeel));
       if (s.knownFor) children.push(summarySection('Known for', s.knownFor));
+      if (s.facts && s.facts.length) children.push(...factsSection(s.facts));
     }
   }
 

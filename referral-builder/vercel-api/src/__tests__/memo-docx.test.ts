@@ -36,6 +36,10 @@ const MEMO: ComposedMemo = {
       camp: 'Timber Lake West',
       theFeel: 'A polished, high-energy co-ed camp where kids settle in fast.',
       knownFor: 'Strong waterfront, big-production evening programs, and trips.',
+      facts: [
+        { label: 'Size', value: '~300 campers' },
+        { label: 'Electives', value: 'Scheduled with some choice' },
+      ],
       location: 'Roscoe, NY',
       website: 'https://www.timberlakewest.com',
     },
@@ -43,6 +47,7 @@ const MEMO: ComposedMemo = {
       camp: 'Mystery Camp',
       theFeel: 'A warm, traditional community with a broad activity menu.',
       knownFor: 'Classic camp staples done well.',
+      facts: [],
       location: '',
       website: '',
     },
@@ -67,6 +72,16 @@ describe('renderMemoDocx', () => {
     const rels = await zip.file('word/_rels/document.xml.rels').async('string');
     // The website URL is recorded as an external relationship target.
     expect(rels).toContain('https://www.timberlakewest.com');
+  });
+
+  test('renders the "The Facts" section with its attributes', async () => {
+    const JSZip = require('jszip');
+    const buf = await renderMemoDocx(MEMO);
+    const zip = await JSZip.loadAsync(buf);
+    const doc = await zip.file('word/document.xml').async('string');
+    expect(doc).toContain('The Facts');
+    expect(doc).toContain('Electives');
+    expect(doc).toContain('Scheduled with some choice');
   });
 
   test('renders even with empty table / summaries', async () => {
