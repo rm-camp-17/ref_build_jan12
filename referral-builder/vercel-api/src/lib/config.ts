@@ -164,8 +164,11 @@ export const config = {
     // strong prose; bump to 'high' if you accept the extra latency.
     effort: process.env.MEMO_EFFORT || 'medium',
     // Per-camp narrative character cap fed to the model (0 = no cap). Bounds the
-    // prompt/generation time for multi-camp memos. The recaps run several KB.
-    writeupCharCap: Number(process.env.MEMO_WRITEUP_CHAR_CAP || '3500'),
+    // prompt for multi-camp memos. Raised to 6000 so the model sees enough of
+    // each write-up to draw the camp's real, specific character (the textures
+    // that make the voice land), not just the opening. Input tokens are cheap;
+    // generation time is driven by output, which is short here.
+    writeupCharCap: Number(process.env.MEMO_WRITEUP_CHAR_CAP || '6000'),
     // Where the generated .docx is delivered. We upload to HubSpot Files and
     // attach to the deal via a note engagement. This folder path is created
     // lazily by the Files API on first upload.

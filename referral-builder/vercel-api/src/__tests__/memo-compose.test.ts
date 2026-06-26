@@ -91,22 +91,20 @@ const GOOD_MEMO = {
     {
       camp: 'Chestnut Lake',
       location: 'Beach Lake, PA',
+      ages: '7–15',
       size: 'Mid-sized',
       coed: 'Co-ed',
       sessions: '3 wk',
-      bestFor: 'A warm, flexible first sleepaway',
+      affiliation: '',
     },
   ],
   summaries: [
     {
       camp: 'Chestnut Lake',
+      snapshot:
+        'Chestnut Lake is a mid-sized, co-ed camp offering 3- and 4-week sessions, and runs a choice-based elective program.',
       theFeel: 'A warm, traditional Wayne County camp with a broad activity menu.',
       knownFor: 'Classic camp staples and a strong returning community.',
-      facts: [
-        { label: 'Size', value: '~425 campers' },
-        { label: 'Electives', value: 'Choice-based' },
-        { label: 'Demographic', value: 'Tri-state families' },
-      ],
     },
   ],
 };
@@ -142,14 +140,11 @@ describe('composeMemo', () => {
     expect(memo.familyName).toBe('the Conway Family');
     expect(memo.advisorTake).toBeTruthy();
     expect(memo.table).toHaveLength(1);
-    expect(memo.table[0].bestFor).toMatch(/first sleepaway/i);
+    expect(memo.table[0].ages).toBe('7–15');
     expect(memo.summaries[0].camp).toBe('Chestnut Lake');
+    expect(memo.summaries[0].snapshot).toMatch(/mid-sized/i);
     expect(memo.summaries[0].theFeel).toMatch(/traditional/i);
     expect(memo.summaries[0].knownFor).toBeTruthy();
-    // "The Facts" list comes through (label/value pairs).
-    expect(memo.summaries[0].facts).toEqual(
-      expect.arrayContaining([{ label: 'Electives', value: 'Choice-based' }])
-    );
     // Year + author come from context, overriding whatever the model echoed.
     expect(memo.summerYear).toBe('2027');
     expect(memo.preparedBy).toBe('Denise');
