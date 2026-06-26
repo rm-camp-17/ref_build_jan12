@@ -95,7 +95,13 @@ export interface DealDetails {
   parent_contact_count: number;
   associated_child_count: number;
   associated_household_count: number;
-  associated_companies: Array<{ id: string; name: string | null }>;
+  associated_companies: Array<{
+    id: string;
+    name: string | null;
+    // Camp's "Commission Structure - Summary" (company property
+    // commission_structure___summary). May be absent on older payloads.
+    commission_structure?: string | null;
+  }>;
 }
 
 // ============================================================================

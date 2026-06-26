@@ -62,9 +62,22 @@ export function WonView({
 }: Props) {
   const locked = isCommissionLocked(details);
   const [error, setError] = useState<string | null>(null);
+  const remaining = commissionsRemaining(details);
 
   return (
     <Flex direction="column" gap="sm">
+      {/* Bright-red nudge: if commission is still outstanding, clone the deal
+          into next year so the relationship (and the remaining commission)
+          carries forward. */}
+      {remaining > 0 && (
+        <Alert title="Reminder: clone this deal for next year" variant="error">
+          Commissions are still outstanding (
+          {formatCurrency(String(remaining), details?.deal_currency_code || "USD")}{" "}
+          remaining). Clone this deal into next year so it isn't dropped — use
+          "Create Next Year Deal" below.
+        </Alert>
+      )}
+
       <Heading level={3}>Session Confirmed</Heading>
 
       <SessionSummary cardData={cardData} />
@@ -72,6 +85,8 @@ export function WonView({
       <Divider />
 
       <BillingPanel details={details} />
+
+      <CommissionStructurePanel details={details} />
 
       <Divider />
 
@@ -202,6 +217,52 @@ function formatCurrency(amount: string | null, currency: string | null): string 
   } catch {
     return `${cur} $${n.toLocaleString()}`;
   }
+}
+
+/**
+ * Remaining commission on the deal = commission amount owed minus amount
+ * received. Returns 0 when nothing is owed or the fields are blank.
+ */
+function commissionsRemaining(details: DealDetails | null): number {
+  if (!details) return 0;
+  const amt = parseFloat(details.ce_commission_amount || "");
+  const rec = parseFloat(details.ce_amount_received || "");
+  const amount = Number.isFinite(amt) ? amt : 0;
+  const received = Number.isFinite(rec) ? rec : 0;
+  const remaining = amount - received;
+  return remaining > 0 ? remaining : 0;
+}
+
+/**
+ * Shows the "Commission Structure - Summary" for the deal's camp(s) — pulled
+ * from the associated company record. A Closed Won deal is usually tied to one
+ * camp; if more than one carries a structure, each is listed.
+ */
+function CommissionStructurePanel({
+  details,
+}: {
+  details: DealDetails | null;
+}) {
+  const camps = (details?.associated_companies || []).filter(
+    (c) => (c.commission_structure || "").trim().length > 0
+  );
+  if (camps.length === 0) return null;
+
+  return (
+    <Box>
+      <Heading level={3}>Commission structure</Heading>
+      <Flex direction="column" gap="xs">
+        {camps.map((c) => (
+          <Box key={c.id}>
+            {camps.length > 1 && (
+              <Text format={{ fontWeight: "bold" }}>{c.name || "Camp"}</Text>
+            )}
+            <Text>{c.commission_structure}</Text>
+          </Box>
+        ))}
+      </Flex>
+    </Box>
+  );
 }
 
 export function BillingPanel({ details }: { details: DealDetails | null }) {

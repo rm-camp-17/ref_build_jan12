@@ -90,16 +90,31 @@ export async function GET(
     ]);
 
     // Resolve company names so ReferralTableView can render them in the
-    // "Existing Referrals" badge + auto-select if there's only one.
-    let associated_companies: Array<{ id: string; name: string | null }> = [];
+    // "Existing Referrals" badge + auto-select if there's only one. Also pull
+    // each camp's "Commission Structure - Summary" (company property
+    // commission_structure___summary) so the Won view can show the structure
+    // for the selected camp.
+    let associated_companies: Array<{
+      id: string;
+      name: string | null;
+      commission_structure: string | null;
+    }> = [];
     if (companyIds.length > 0) {
       const companies = await Promise.all(
         companyIds.map(async (id) => {
           try {
-            const c = await hubspotClient.crm.companies.basicApi.getById(id, ['name']);
-            return { id, name: c.properties?.name ?? null };
+            const c = await hubspotClient.crm.companies.basicApi.getById(id, [
+              'name',
+              'commission_structure___summary',
+            ]);
+            return {
+              id,
+              name: c.properties?.name ?? null,
+              commission_structure:
+                c.properties?.commission_structure___summary ?? null,
+            };
           } catch {
-            return { id, name: null };
+            return { id, name: null, commission_structure: null };
           }
         })
       );
