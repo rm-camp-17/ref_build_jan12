@@ -21,7 +21,7 @@ import {
   VerticalAlign,
   WidthType,
 } from 'docx';
-import type { ComposedMemo, MemoTableRow, MemoSummary, MemoFact } from './memo-compose';
+import type { ComposedMemo, MemoTableRow, MemoSummary } from './memo-compose';
 import { memoLogoBuffer, MEMO_LOGO_WIDTH, MEMO_LOGO_HEIGHT } from './memo-logo';
 
 // Camp Experts house palette.
@@ -31,18 +31,31 @@ const MUTED = '6B6B6B'; // secondary / meta text
 const RULE = 'E2E2E2'; // hairline rules
 const NO_BORDER = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } as const;
 
-// 5 columns — Size folds in Co-ed so the table breathes instead of cramming six.
-const COLUMNS: Array<{ label: string; width: number; cell: (r: MemoTableRow) => string }> = [
-  { label: 'Camp', width: 17, cell: (r) => r.camp },
-  { label: 'Location', width: 15, cell: (r) => r.location },
-  {
-    label: 'Size',
-    width: 16,
-    cell: (r) => [r.size, r.coed].filter(Boolean).join(' · '),
-  },
-  { label: 'Sessions', width: 19, cell: (r) => r.sessions },
-  { label: 'Best For', width: 33, cell: (r) => r.bestFor },
-];
+type Column = { label: string; width: number; cell: (r: MemoTableRow) => string };
+
+// Columns hold the scannable hard facts. The Affiliation column only appears
+// when at least one camp in the set actually has an affiliation, so mixed
+// (mostly-secular) sets stay clean.
+function columnsFor(rows: MemoTableRow[]): Column[] {
+  const showAffiliation = rows.some((r) => r.affiliation && r.affiliation.trim());
+  const base: Column[] = [
+    { label: 'Camp', width: 0, cell: (r) => r.camp },
+    { label: 'Location', width: 0, cell: (r) => r.location },
+    { label: 'Ages', width: 0, cell: (r) => r.ages },
+    { label: 'Size', width: 0, cell: (r) => r.size },
+    { label: 'Co-ed', width: 0, cell: (r) => r.coed },
+    { label: 'Sessions', width: 0, cell: (r) => r.sessions },
+  ];
+  if (showAffiliation) {
+    base.push({ label: 'Affiliation', width: 0, cell: (r) => r.affiliation });
+  }
+  // Relative weights, normalized to 100 so widths adapt to column count.
+  const weights = showAffiliation
+    ? [17, 15, 9, 12, 10, 18, 19]
+    : [19, 17, 11, 14, 12, 27];
+  const total = weights.reduce((a, b) => a + b, 0);
+  return base.map((c, i) => ({ ...c, width: Math.round((weights[i] / total) * 100) }));
+}
 
 const CELL_MARGINS = { top: 70, bottom: 70, left: 120, right: 120 };
 
@@ -100,14 +113,15 @@ function bodyCell(text: string, widthPct: number, isName: boolean): TableCell {
 }
 
 function buildTable(rows: MemoTableRow[]): Table {
+  const columns = columnsFor(rows);
   const headerRow = new TableRow({
     tableHeader: true,
-    children: COLUMNS.map((c) => headerCell(c.label, c.width)),
+    children: columns.map((c) => headerCell(c.label, c.width)),
   });
   const bodyRows = rows.map(
     (row) =>
       new TableRow({
-        children: COLUMNS.map((c, i) => bodyCell(c.cell(row), c.width, i === 0)),
+        children: columns.map((c, i) => bodyCell(c.cell(row), c.width, i === 0)),
       })
   );
   return new Table({
@@ -234,11 +248,11 @@ function titleBlock(memo: ComposedMemo): Paragraph[] {
 }
 
 /**
- * One camp's header: bold name, a muted meta line (location · size · co-ed) and
- * a quiet (non-underlined, gray) website link — subtle so it doesn't pull
- * attention from the recommendation.
+ * One camp's header: bold name, then a muted meta line with just location and a
+ * quiet (non-underlined, gray) website link. Size/co-ed/sessions live in the
+ * table and the snapshot, so we don't repeat them here.
  */
-function summaryHeader(s: MemoSummary, row: MemoTableRow | undefined): Paragraph[] {
+function summaryHeader(s: MemoSummary): Paragraph[] {
   const out: Paragraph[] = [
     new Paragraph({
       spacing: { before: 240, after: 20 },
@@ -246,10 +260,9 @@ function summaryHeader(s: MemoSummary, row: MemoTableRow | undefined): Paragraph
     }),
   ];
 
-  const metaBits = [s.location, row?.size, row?.coed].filter(Boolean);
   const metaRuns: Array<TextRun | ExternalHyperlink> = [];
-  if (metaBits.length) {
-    metaRuns.push(new TextRun({ text: metaBits.join('  ·  '), size: 19, color: MUTED }));
+  if (s.location) {
+    metaRuns.push(new TextRun({ text: s.location, size: 19, color: MUTED }));
   }
   if (s.website) {
     if (metaRuns.length) {
@@ -282,27 +295,12 @@ function summarySection(label: string, text: string): Paragraph {
   });
 }
 
-/** "The Facts": a short, scannable list of concrete attributes. */
-function factsSection(facts: MemoFact[]): Paragraph[] {
-  const out: Paragraph[] = [
-    new Paragraph({
-      spacing: { after: 30 },
-      children: [new TextRun({ text: 'The Facts', bold: true, size: 21, color: ACCENT })],
-    }),
-  ];
-  for (const f of facts) {
-    out.push(
-      new Paragraph({
-        spacing: { after: 20 },
-        indent: { left: 200 },
-        children: [
-          new TextRun({ text: `${f.label}:  `, bold: true, size: 20, color: INK }),
-          new TextRun({ text: f.value, size: 20, color: MUTED }),
-        ],
-      })
-    );
-  }
-  return out;
+/** The factual one/two-sentence snapshot — the lead line of a camp block. */
+function snapshotLine(text: string): Paragraph {
+  return new Paragraph({
+    spacing: { after: 80 },
+    children: [new TextRun({ text, size: 21, color: INK })],
+  });
 }
 
 /** Build the document model and pack it to a .docx Buffer. */
@@ -331,17 +329,14 @@ export async function renderMemoDocx(memo: ComposedMemo): Promise<Buffer> {
     children.push(buildTable(memo.table));
   }
 
-  // Quick Summaries — same two sections for every camp.
+  // Quick Summaries — snapshot + The feel + Known for for every camp.
   if (memo.summaries.length > 0) {
-    const rowByCamp = new Map<string, MemoTableRow>();
-    for (const r of memo.table) rowByCamp.set(normKey(r.camp), r);
-
     children.push(sectionHeading('Quick Summaries'));
     for (const s of memo.summaries) {
-      children.push(...summaryHeader(s, rowByCamp.get(normKey(s.camp))));
+      children.push(...summaryHeader(s));
+      if (s.snapshot) children.push(snapshotLine(s.snapshot));
       if (s.theFeel) children.push(summarySection('The feel', s.theFeel));
       if (s.knownFor) children.push(summarySection('Known for', s.knownFor));
-      if (s.facts && s.facts.length) children.push(...factsSection(s.facts));
     }
   }
 
@@ -357,10 +352,6 @@ export async function renderMemoDocx(memo: ComposedMemo): Promise<Buffer> {
   });
 
   return Packer.toBuffer(doc);
-}
-
-function normKey(s: string): string {
-  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
 /** Build a filesystem-safe .docx filename for the memo. */

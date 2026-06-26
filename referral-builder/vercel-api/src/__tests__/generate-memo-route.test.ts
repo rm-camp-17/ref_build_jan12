@@ -168,7 +168,7 @@ beforeEach(() => {
     advisorTake: 'Three strong, warm options.',
     table: [],
     summaries: [],
-  });
+  } as any);
 });
 
 describe('POST generate-memo (start a job)', () => {

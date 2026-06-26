@@ -17,37 +17,37 @@ const MEMO: ComposedMemo = {
     {
       camp: 'Timber Lake West',
       location: 'Roscoe, NY',
+      ages: '7–16',
       size: 'Mid-sized',
       coed: 'Co-ed',
       sessions: '4 wk / 3 wk',
-      bestFor: 'Kids who love a high-energy, full day',
+      affiliation: '',
     },
     {
       camp: 'Chestnut Lake',
       location: 'Beach Lake, PA',
+      ages: '7–15',
       size: 'Mid-sized',
       coed: 'Co-ed',
       sessions: '3 wk / 4 wk / full',
-      bestFor: 'A warm, flexible first sleepaway',
+      affiliation: '',
     },
   ],
   summaries: [
     {
       camp: 'Timber Lake West',
+      snapshot:
+        'Timber Lake West is a mid-sized, co-ed camp offering 3- and 4-week sessions, and runs a scheduled program with some choice.',
       theFeel: 'A polished, high-energy co-ed camp where kids settle in fast.',
       knownFor: 'Strong waterfront, big-production evening programs, and trips.',
-      facts: [
-        { label: 'Size', value: '~300 campers' },
-        { label: 'Electives', value: 'Scheduled with some choice' },
-      ],
       location: 'Roscoe, NY',
       website: 'https://www.timberlakewest.com',
     },
     {
       camp: 'Mystery Camp',
+      snapshot: 'Mystery Camp is a mid-sized, co-ed camp.',
       theFeel: 'A warm, traditional community with a broad activity menu.',
       knownFor: 'Classic camp staples done well.',
-      facts: [],
       location: '',
       website: '',
     },
@@ -74,14 +74,17 @@ describe('renderMemoDocx', () => {
     expect(rels).toContain('https://www.timberlakewest.com');
   });
 
-  test('renders the "The Facts" section with its attributes', async () => {
+  test('renders the snapshot sentence and an Ages column (not a facts list)', async () => {
     const JSZip = require('jszip');
     const buf = await renderMemoDocx(MEMO);
     const zip = await JSZip.loadAsync(buf);
     const doc = await zip.file('word/document.xml').async('string');
-    expect(doc).toContain('The Facts');
-    expect(doc).toContain('Electives');
-    expect(doc).toContain('Scheduled with some choice');
+    // Snapshot sentence present; old "The Facts" list gone.
+    expect(doc).toContain('runs a scheduled program with some choice');
+    expect(doc).not.toContain('The Facts');
+    // At-a-Glance now carries Ages (header is rendered upper-cased).
+    expect(doc).toContain('AGES');
+    expect(doc).toContain('7–16');
   });
 
   test('renders even with empty table / summaries', async () => {
