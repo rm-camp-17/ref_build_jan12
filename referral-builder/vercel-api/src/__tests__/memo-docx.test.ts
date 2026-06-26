@@ -7,26 +7,28 @@ import { renderMemoDocx, memoFileName } from '../lib/memo-docx';
 import type { ComposedMemo } from '../lib/memo-compose';
 
 const MEMO: ComposedMemo = {
-  title: 'Camp Experts',
-  preparedFor: 'Prepared for the Conway Family by Denise',
-  subtitle: 'Summer 2027 — Camp Recommendations',
-  forLine: 'For Archie (rising 5th) and Luke (rising 3rd)',
+  familyName: 'the Conway Family',
+  childrenLine: 'Archie, rising 5th · Luke, rising 3rd',
+  summerYear: '2027',
+  preparedBy: 'Denise',
+  advisorTake:
+    'These three share a warm, traditional core but each has its own character — from the polished energy of Timber Lake West to the down-to-earth feel of the others.',
   table: [
     {
       camp: 'Timber Lake West',
       location: 'Roscoe, NY',
-      size: '280–325',
-      sessions: '4 wk / 3 wk',
+      size: 'Mid-sized',
       coed: 'Co-ed',
-      programStyle: 'Highly structured',
+      sessions: '4 wk / 3 wk',
+      bestFor: 'Kids who love a high-energy, full day',
     },
     {
       camp: 'Chestnut Lake',
       location: 'Beach Lake, PA',
-      size: '425+',
-      sessions: '3 wk / 4 wk',
+      size: 'Mid-sized',
       coed: 'Co-ed',
-      programStyle: 'Balanced',
+      sessions: '3 wk / 4 wk / full',
+      bestFor: 'A warm, flexible first sleepaway',
     },
   ],
   summaries: [
@@ -84,11 +86,8 @@ describe('memoFileName', () => {
     expect(name).not.toMatch(/[^a-zA-Z0-9_.\-]/);
   });
 
-  test('falls back to the deal id when no header text', () => {
-    const name = memoFileName(
-      { ...MEMO, preparedFor: '', subtitle: '' },
-      '999'
-    );
+  test('falls back to the deal id when no family name', () => {
+    const name = memoFileName({ ...MEMO, familyName: '' }, '999');
     expect(name).toContain('999');
   });
 });

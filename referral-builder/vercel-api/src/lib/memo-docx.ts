@@ -1,8 +1,9 @@
 /**
- * Renders a ComposedMemo to a .docx Buffer: the Camp Experts logo, a short
- * header, an "At a Glance" comparison table, and "Quick Summaries". Each camp's
- * summary uses the same two sections ("The feel" / "Known for") and shows the
- * camp's location and a link to its website next to the name.
+ * Renders a ComposedMemo to a polished .docx Buffer: the Camp Experts logo, a
+ * compact branded title block, a short "Advisor Take", a clean "At a Glance"
+ * comparison table, and per-camp "Quick Summaries". Designed to read like a
+ * premium advisor one-pager, not a school report — generous whitespace, subtle
+ * rules instead of a heavy grid, and quiet (non-underlined) website links.
  */
 
 import {
@@ -10,55 +11,89 @@ import {
   BorderStyle,
   Document,
   ExternalHyperlink,
-  HeadingLevel,
   ImageRun,
   Packer,
   Paragraph,
-  ShadingType,
   Table,
   TableCell,
   TableRow,
   TextRun,
+  VerticalAlign,
   WidthType,
 } from 'docx';
 import type { ComposedMemo, MemoTableRow, MemoSummary } from './memo-compose';
 import { memoLogoBuffer, MEMO_LOGO_WIDTH, MEMO_LOGO_HEIGHT } from './memo-logo';
 
-// Camp Experts house accent (terracotta) used on the table header row, matching
-// the original artifact.
-const ACCENT = 'C47475';
-const HEADER_TEXT = 'FFFFFF';
-const LINK_BLUE = '0563C1';
+// Camp Experts house palette.
+const ACCENT = 'C47475'; // terracotta
+const INK = '1A1A1A'; // near-black body text
+const MUTED = '6B6B6B'; // secondary / meta text
+const RULE = 'E2E2E2'; // hairline rules
+const NO_BORDER = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' } as const;
 
-const COLUMNS: Array<{ key: keyof MemoTableRow; label: string; width: number }> = [
-  { key: 'camp', label: 'Camp', width: 16 },
-  { key: 'location', label: 'Location', width: 14 },
-  { key: 'size', label: 'Size', width: 12 },
-  { key: 'sessions', label: 'Sessions', width: 22 },
-  { key: 'coed', label: 'Co-ed / B-S', width: 14 },
-  { key: 'programStyle', label: 'Program Style', width: 22 },
+// 5 columns — Size folds in Co-ed so the table breathes instead of cramming six.
+const COLUMNS: Array<{ label: string; width: number; cell: (r: MemoTableRow) => string }> = [
+  { label: 'Camp', width: 17, cell: (r) => r.camp },
+  { label: 'Location', width: 15, cell: (r) => r.location },
+  {
+    label: 'Size',
+    width: 16,
+    cell: (r) => [r.size, r.coed].filter(Boolean).join(' · '),
+  },
+  { label: 'Sessions', width: 19, cell: (r) => r.sessions },
+  { label: 'Best For', width: 33, cell: (r) => r.bestFor },
 ];
+
+const CELL_MARGINS = { top: 70, bottom: 70, left: 120, right: 120 };
 
 function headerCell(label: string, widthPct: number): TableCell {
   return new TableCell({
     width: { size: widthPct, type: WidthType.PERCENTAGE },
-    shading: { type: ShadingType.CLEAR, color: 'auto', fill: ACCENT },
+    margins: CELL_MARGINS,
+    verticalAlign: VerticalAlign.CENTER,
+    borders: {
+      top: NO_BORDER,
+      left: NO_BORDER,
+      right: NO_BORDER,
+      bottom: { style: BorderStyle.SINGLE, size: 12, color: ACCENT },
+    },
     children: [
       new Paragraph({
         children: [
-          new TextRun({ text: label, bold: true, color: HEADER_TEXT, size: 18 }),
+          new TextRun({
+            text: label.toUpperCase(),
+            bold: true,
+            color: ACCENT,
+            size: 16,
+            characterSpacing: 20,
+          }),
         ],
       }),
     ],
   });
 }
 
-function bodyCell(text: string, widthPct: number): TableCell {
+function bodyCell(text: string, widthPct: number, isName: boolean): TableCell {
   return new TableCell({
     width: { size: widthPct, type: WidthType.PERCENTAGE },
+    margins: CELL_MARGINS,
+    verticalAlign: VerticalAlign.CENTER,
+    borders: {
+      top: NO_BORDER,
+      left: NO_BORDER,
+      right: NO_BORDER,
+      bottom: { style: BorderStyle.SINGLE, size: 4, color: RULE },
+    },
     children: [
       new Paragraph({
-        children: [new TextRun({ text: text || '', size: 18 })],
+        children: [
+          new TextRun({
+            text: text || '',
+            size: 19,
+            bold: isName,
+            color: isName ? INK : MUTED,
+          }),
+        ],
       }),
     ],
   });
@@ -72,28 +107,35 @@ function buildTable(rows: MemoTableRow[]): Table {
   const bodyRows = rows.map(
     (row) =>
       new TableRow({
-        children: COLUMNS.map((c) => bodyCell(String(row[c.key] ?? ''), c.width)),
+        children: COLUMNS.map((c, i) => bodyCell(c.cell(row), c.width, i === 0)),
       })
   );
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [headerRow, ...bodyRows],
     borders: {
-      top: { style: BorderStyle.SINGLE, size: 4, color: 'CCCCCC' },
-      bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CCCCCC' },
-      left: { style: BorderStyle.SINGLE, size: 4, color: 'CCCCCC' },
-      right: { style: BorderStyle.SINGLE, size: 4, color: 'CCCCCC' },
-      insideHorizontal: { style: BorderStyle.SINGLE, size: 4, color: 'CCCCCC' },
-      insideVertical: { style: BorderStyle.SINGLE, size: 4, color: 'CCCCCC' },
+      top: NO_BORDER,
+      bottom: NO_BORDER,
+      left: NO_BORDER,
+      right: NO_BORDER,
+      insideHorizontal: NO_BORDER, // per-cell bottom rules instead
+      insideVertical: NO_BORDER,
     },
   });
 }
 
 function sectionHeading(text: string): Paragraph {
   return new Paragraph({
-    heading: HeadingLevel.HEADING_2,
-    spacing: { before: 320, after: 120 },
-    children: [new TextRun({ text, bold: true, size: 26 })],
+    spacing: { before: 360, after: 140 },
+    children: [
+      new TextRun({
+        text: text.toUpperCase(),
+        bold: true,
+        color: ACCENT,
+        size: 22,
+        characterSpacing: 30,
+      }),
+    ],
   });
 }
 
@@ -106,59 +148,20 @@ function hostDisplay(url: string): string {
     .trim();
 }
 
-/**
- * One camp's header line: bold name, location, and a website link "next to the
- * name". Renders as: "Chestnut Lake — Beach Lake, PA · chestnutlakecamp.com"
- * (the domain hyperlinked).
- */
-function summaryHeader(s: MemoSummary): Paragraph {
-  const children: Array<TextRun | ExternalHyperlink> = [
-    new TextRun({ text: s.camp, bold: true, size: 24 }),
-  ];
-  if (s.location) {
-    children.push(new TextRun({ text: `  —  ${s.location}`, size: 22 }));
-  }
-  if (s.website) {
-    children.push(new TextRun({ text: '   ·   ', size: 22, color: '999999' }));
-    children.push(
-      new ExternalHyperlink({
-        link: s.website,
-        children: [
-          new TextRun({
-            text: hostDisplay(s.website) || 'Website',
-            size: 21,
-            color: LINK_BLUE,
-            underline: {},
-          }),
-        ],
-      })
-    );
-  }
-  return new Paragraph({ spacing: { before: 200, after: 40 }, children });
+function firstName(name: string): string {
+  return (name || '').trim().split(/\s+/)[0] || '';
 }
 
-/** A labeled summary section, e.g. "The feel: ...". */
-function summarySection(label: string, text: string): Paragraph {
-  return new Paragraph({
-    spacing: { after: 60 },
-    children: [
-      new TextRun({ text: `${label}: `, bold: true, size: 21 }),
-      new TextRun({ text: text || '', size: 21 }),
-    ],
-  });
-}
+/** Title block: logo, "Camp Recommendations [for the X Family]", year, kids, author. */
+function titleBlock(memo: ComposedMemo): Paragraph[] {
+  const out: Paragraph[] = [];
 
-/** Build the document model and pack it to a .docx Buffer. */
-export async function renderMemoDocx(memo: ComposedMemo): Promise<Buffer> {
-  const children: Array<Paragraph | Table> = [];
-
-  // Logo (the Camp Experts wordmark) — scaled to a header size, aspect kept.
-  const logoW = 230;
+  const logoW = 190;
   const logoH = Math.round((logoW * MEMO_LOGO_HEIGHT) / MEMO_LOGO_WIDTH);
-  children.push(
+  out.push(
     new Paragraph({
       alignment: AlignmentType.CENTER,
-      spacing: { after: 120 },
+      spacing: { after: 160 },
       children: [
         new ImageRun({
           type: 'png',
@@ -169,31 +172,132 @@ export async function renderMemoDocx(memo: ComposedMemo): Promise<Buffer> {
     })
   );
 
-  // Header block
-  if (memo.preparedFor) {
-    children.push(
+  out.push(
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 30 },
+      children: [
+        new TextRun({
+          text: `Camp Recommendations${memo.familyName ? ` for ${memo.familyName}` : ''}`,
+          bold: true,
+          color: ACCENT,
+          size: 32,
+        }),
+      ],
+    })
+  );
+
+  if (memo.summerYear) {
+    out.push(
       new Paragraph({
         alignment: AlignmentType.CENTER,
-        spacing: { after: 40 },
-        children: [new TextRun({ text: memo.preparedFor, size: 22 })],
+        spacing: { after: 30 },
+        children: [
+          new TextRun({ text: `Summer ${memo.summerYear}`, size: 24, color: INK }),
+        ],
       })
     );
   }
-  if (memo.subtitle) {
-    children.push(
+  if (memo.childrenLine) {
+    out.push(
       new Paragraph({
         alignment: AlignmentType.CENTER,
-        spacing: { after: 40 },
-        children: [new TextRun({ text: memo.subtitle, bold: true, size: 24 })],
+        spacing: { after: 30 },
+        children: [
+          new TextRun({ text: memo.childrenLine, italics: true, size: 22, color: MUTED }),
+        ],
       })
     );
   }
-  if (memo.forLine) {
-    children.push(
+  if (memo.preparedBy) {
+    out.push(
       new Paragraph({
         alignment: AlignmentType.CENTER,
-        spacing: { after: 200 },
-        children: [new TextRun({ text: memo.forLine, italics: true, size: 22 })],
+        spacing: { after: 60 },
+        children: [
+          new TextRun({ text: `Prepared by ${memo.preparedBy}`, size: 20, color: MUTED }),
+        ],
+      })
+    );
+  }
+
+  // Hairline rule under the header.
+  out.push(
+    new Paragraph({
+      spacing: { before: 120, after: 0 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: RULE, space: 1 } },
+      children: [new TextRun({ text: '', size: 2 })],
+    })
+  );
+
+  return out;
+}
+
+/**
+ * One camp's header: bold name, a muted meta line (location · size · co-ed) and
+ * a quiet (non-underlined, gray) website link — subtle so it doesn't pull
+ * attention from the recommendation.
+ */
+function summaryHeader(s: MemoSummary, row: MemoTableRow | undefined): Paragraph[] {
+  const out: Paragraph[] = [
+    new Paragraph({
+      spacing: { before: 240, after: 20 },
+      children: [new TextRun({ text: s.camp, bold: true, size: 25, color: INK })],
+    }),
+  ];
+
+  const metaBits = [s.location, row?.size, row?.coed].filter(Boolean);
+  const metaRuns: Array<TextRun | ExternalHyperlink> = [];
+  if (metaBits.length) {
+    metaRuns.push(new TextRun({ text: metaBits.join('  ·  '), size: 19, color: MUTED }));
+  }
+  if (s.website) {
+    if (metaRuns.length) {
+      metaRuns.push(new TextRun({ text: '   ·   ', size: 19, color: MUTED }));
+    }
+    metaRuns.push(
+      new ExternalHyperlink({
+        link: s.website,
+        children: [
+          // Quiet link: muted gray, no underline (per "reduce blue underlines").
+          new TextRun({ text: hostDisplay(s.website) || 'Website', size: 19, color: MUTED }),
+        ],
+      })
+    );
+  }
+  if (metaRuns.length) {
+    out.push(new Paragraph({ spacing: { after: 80 }, children: metaRuns }));
+  }
+  return out;
+}
+
+/** A labeled summary section, e.g. "The feel: ...". */
+function summarySection(label: string, text: string): Paragraph {
+  return new Paragraph({
+    spacing: { after: 70 },
+    children: [
+      new TextRun({ text: `${label}:  `, bold: true, size: 21, color: ACCENT }),
+      new TextRun({ text: text || '', size: 21, color: INK }),
+    ],
+  });
+}
+
+/** Build the document model and pack it to a .docx Buffer. */
+export async function renderMemoDocx(memo: ComposedMemo): Promise<Buffer> {
+  const children: Array<Paragraph | Table> = [];
+
+  children.push(...titleBlock(memo));
+
+  // Advisor Take — a short, curated framing (neutral; never a ranking).
+  if (memo.advisorTake) {
+    const takeLabel = memo.preparedBy
+      ? `${firstName(memo.preparedBy)}'s Take`
+      : 'Advisor Take';
+    children.push(sectionHeading(takeLabel));
+    children.push(
+      new Paragraph({
+        spacing: { after: 40 },
+        children: [new TextRun({ text: memo.advisorTake, size: 22, color: INK })],
       })
     );
   }
@@ -206,9 +310,12 @@ export async function renderMemoDocx(memo: ComposedMemo): Promise<Buffer> {
 
   // Quick Summaries — same two sections for every camp.
   if (memo.summaries.length > 0) {
+    const rowByCamp = new Map<string, MemoTableRow>();
+    for (const r of memo.table) rowByCamp.set(normKey(r.camp), r);
+
     children.push(sectionHeading('Quick Summaries'));
     for (const s of memo.summaries) {
-      children.push(summaryHeader(s));
+      children.push(...summaryHeader(s, rowByCamp.get(normKey(s.camp))));
       if (s.theFeel) children.push(summarySection('The feel', s.theFeel));
       if (s.knownFor) children.push(summarySection('Known for', s.knownFor));
     }
@@ -216,22 +323,31 @@ export async function renderMemoDocx(memo: ComposedMemo): Promise<Buffer> {
 
   const doc = new Document({
     creator: 'Camp Experts Referral Builder',
-    title: memo.subtitle || 'Camp Recommendations',
-    sections: [{ properties: {}, children }],
+    title: `Camp Recommendations${memo.familyName ? ` — ${memo.familyName}` : ''}`,
+    sections: [
+      {
+        properties: {},
+        children,
+      },
+    ],
   });
 
   return Packer.toBuffer(doc);
 }
 
+function normKey(s: string): string {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
 /** Build a filesystem-safe .docx filename for the memo. */
 export function memoFileName(memo: ComposedMemo, dealId: string): string {
   const base =
-    (memo.preparedFor || memo.subtitle || `Camp Recommendations ${dealId}`)
-      .replace(/^prepared for\s+/i, '')
-      .replace(/\s+by\s+.*$/i, '')
+    (memo.familyName || `Camp Recommendations ${dealId}`)
+      .replace(/^the\s+/i, '')
       .replace(/[^a-zA-Z0-9 \-_]/g, '')
       .trim()
       .replace(/\s+/g, '_')
       .slice(0, 60) || `Camp_Recommendations_${dealId}`;
-  return `${base}_Camp_Recommendations.docx`;
+  const year = memo.summerYear ? `_${memo.summerYear}` : '';
+  return `${base}${year}_Camp_Recommendations.docx`;
 }

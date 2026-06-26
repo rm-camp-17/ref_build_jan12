@@ -82,18 +82,19 @@ const ctx: MemoContext = {
 };
 
 const GOOD_MEMO = {
-  title: 'Camp Experts',
-  preparedFor: 'Prepared for the family by Denise',
-  subtitle: 'Summer 2027 — Camp Recommendations',
-  forLine: '',
+  familyName: 'the Conway Family',
+  childrenLine: 'Archie, rising 5th',
+  summerYear: '2026',
+  preparedBy: 'someone else',
+  advisorTake: 'Two strong, warm options with distinct character.',
   table: [
     {
       camp: 'Chestnut Lake',
       location: 'Beach Lake, PA',
-      size: '425+',
-      sessions: '3 wk',
+      size: 'Mid-sized',
       coed: 'Co-ed',
-      programStyle: 'Balanced',
+      sessions: '3 wk',
+      bestFor: 'A warm, flexible first sleepaway',
     },
   ],
   summaries: [
@@ -133,11 +134,16 @@ describe('composeMemo', () => {
       ],
     };
     const memo = await composeMemo(camps, ctx);
-    expect(memo.title).toBe('Camp Experts');
+    expect(memo.familyName).toBe('the Conway Family');
+    expect(memo.advisorTake).toBeTruthy();
     expect(memo.table).toHaveLength(1);
+    expect(memo.table[0].bestFor).toMatch(/first sleepaway/i);
     expect(memo.summaries[0].camp).toBe('Chestnut Lake');
     expect(memo.summaries[0].theFeel).toMatch(/traditional/i);
     expect(memo.summaries[0].knownFor).toBeTruthy();
+    // Year + author come from context, overriding whatever the model echoed.
+    expect(memo.summerYear).toBe('2027');
+    expect(memo.preparedBy).toBe('Denise');
     // Location + website are threaded in from the company record, not the model.
     expect(memo.summaries[0].location).toBe('Beach Lake, PA');
     expect(memo.summaries[0].website).toBe('https://www.chestnutlakecamp.com');
