@@ -18,7 +18,7 @@
  * their typed input.
  */
 
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   hubspot,
   Alert,
@@ -116,24 +116,142 @@ function LostDisplayView({
         <Text>{reason || "—"}</Text>
       </Box>
 
-      {/* Item 1: clone-to-next-year is only offered when the family said
-          they're waiting for next year. The clone fires immediately. */}
-      {cat === "WAIT_NEXT_YEAR" && (
-        <>
-          <Divider />
-          <CloneNextYearSection
-            dealId={dealId}
-            defaultYear={wait || String(new Date().getFullYear() + 1)}
-            onCloned={onCloned}
-          />
-        </>
-      )}
+      {/* Any lost deal can be cloned into next year (not just "waiting for
+          next year"). The wait year, if captured, pre-fills the target. */}
+      <Divider />
+      <CloneNextYearSection
+        dealId={dealId}
+        defaultYear={wait || String(new Date().getFullYear() + 1)}
+        onCloned={onCloned}
+      />
     </Flex>
   );
 }
 
 // ============================================================================
-// Clone to next year (immediate — item 1)
+// Clone-for-year hook (shared by the Closed Lost view and the one-step
+// "Mark as Lost & Clone" action so the locked-source confirmation flow lives
+// in one place).
+// ============================================================================
+
+interface CloneResult {
+  newDealName: string;
+  deduped: boolean;
+}
+interface CloneConfirmation {
+  message: string;
+  lockedFields: string[];
+}
+
+function useCloneForYear(dealId: string) {
+  const [cloning, setCloning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<CloneResult | null>(null);
+  const [needsConfirmation, setNeedsConfirmation] =
+    useState<CloneConfirmation | null>(null);
+
+  const performClone = useCallback(
+    async (
+      targetYear: number,
+      confirmExpertFields: boolean
+    ): Promise<"ok" | "confirm" | "error"> => {
+      setCloning(true);
+      setError(null);
+      try {
+        const resp = await hubspot.fetch(
+          `${API_BASE}/api/v2/deal/${dealId}/clone-for-year`,
+          {
+            method: "POST",
+            body: JSON.stringify({ targetYear, confirmExpertFields }),
+          }
+        );
+        const data = await resp.json().catch(() => ({}));
+        if (resp.status === 409 && data.requiresConfirmation) {
+          setNeedsConfirmation({
+            message: data.message,
+            lockedFields: data.lockedFields ?? [],
+          });
+          return "confirm";
+        }
+        if (resp.ok && data.success) {
+          setResult({ newDealName: data.newDealName, deduped: !!data.deduped });
+          setNeedsConfirmation(null);
+          return "ok";
+        }
+        setError(data.message || "Failed to clone deal.");
+        return "error";
+      } catch {
+        setError("Failed to clone deal. Please try again.");
+        return "error";
+      } finally {
+        setCloning(false);
+      }
+    },
+    [dealId]
+  );
+
+  return {
+    cloning,
+    error,
+    result,
+    needsConfirmation,
+    clearConfirmation: () => setNeedsConfirmation(null),
+    performClone,
+  };
+}
+
+/** Success alert shared by both clone entry points. */
+function CloneSuccess({
+  result,
+  targetYear,
+}: {
+  result: CloneResult;
+  targetYear: string;
+}) {
+  return (
+    <Alert title="Next-year deal created" variant="success">
+      {result.deduped
+        ? `Found existing ${targetYear} deal: "${result.newDealName}".`
+        : `Created "${result.newDealName}" for ${targetYear}. Referrals, associations, and activity carried over.`}
+    </Alert>
+  );
+}
+
+/** The locked-source confirmation block shared by both clone entry points. */
+function CloneConfirm({
+  confirmation,
+  cloning,
+  onConfirm,
+  onCancel,
+}: {
+  confirmation: CloneConfirmation;
+  cloning: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Flex direction="column" gap="sm">
+      <Alert title="Source deal is commission_locked" variant="warning">
+        {confirmation.message}
+      </Alert>
+      <Text variant="microcopy">
+        These fields copy to the new deal:{" "}
+        {confirmation.lockedFields.join(", ")}.
+      </Text>
+      <Flex direction="row" gap="sm">
+        <Button variant="primary" onClick={onConfirm} disabled={cloning}>
+          {cloning ? "Cloning..." : "Confirm and clone"}
+        </Button>
+        <Button variant="secondary" onClick={onCancel} disabled={cloning}>
+          Cancel
+        </Button>
+      </Flex>
+    </Flex>
+  );
+}
+
+// ============================================================================
+// Clone to next year (Closed Lost view — any lost deal)
 // ============================================================================
 
 function CloneNextYearSection({
@@ -146,100 +264,38 @@ function CloneNextYearSection({
   onCloned: () => void;
 }) {
   const [targetYear, setTargetYear] = useState(defaultYear);
-  const [cloning, setCloning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{
-    newDealName: string;
-    deduped: boolean;
-  } | null>(null);
-  const [needsConfirmation, setNeedsConfirmation] = useState<{
-    message: string;
-    lockedFields: string[];
-  } | null>(null);
+  const clone = useCloneForYear(dealId);
 
-  const performClone = async (confirmExpertFields: boolean) => {
-    setCloning(true);
-    setError(null);
-    try {
-      const resp = await hubspot.fetch(
-        `${API_BASE}/api/v2/deal/${dealId}/clone-for-year`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            targetYear: parseInt(targetYear, 10),
-            confirmExpertFields,
-          }),
-        }
-      );
-      const data = await resp.json().catch(() => ({}));
-      if (resp.status === 409 && data.requiresConfirmation) {
-        setNeedsConfirmation({
-          message: data.message,
-          lockedFields: data.lockedFields ?? [],
-        });
-        return;
-      }
-      if (resp.ok && data.success) {
-        setResult({ newDealName: data.newDealName, deduped: !!data.deduped });
-        setNeedsConfirmation(null);
-        onCloned();
-      } else {
-        setError(data.message || "Failed to clone deal.");
-      }
-    } catch {
-      setError("Failed to clone deal. Please try again.");
-    } finally {
-      setCloning(false);
-    }
+  const run = async (confirmExpertFields: boolean) => {
+    const outcome = await clone.performClone(
+      parseInt(targetYear, 10),
+      confirmExpertFields
+    );
+    if (outcome === "ok") onCloned();
   };
 
-  if (result) {
-    return (
-      <Alert title="Next-year deal created" variant="success">
-        {result.deduped
-          ? `Found existing ${targetYear} deal: "${result.newDealName}".`
-          : `Created "${result.newDealName}" for ${targetYear}. Referrals, associations, and activity carried over.`}
-      </Alert>
-    );
+  if (clone.result) {
+    return <CloneSuccess result={clone.result} targetYear={targetYear} />;
   }
 
   return (
     <Flex direction="column" gap="sm">
-      <Heading level={3}>Waiting for next year</Heading>
+      <Heading level={3}>Clone to next year</Heading>
       <Text variant="microcopy">
         Clone this deal into {targetYear} now. The new deal carries the same
         referrals, associations (child, household, parent), and prior
         activity, and lands in next year's pipeline.
       </Text>
 
-      {error && <Alert variant="error">{error}</Alert>}
+      {clone.error && <Alert variant="error">{clone.error}</Alert>}
 
-      {needsConfirmation ? (
-        <Flex direction="column" gap="sm">
-          <Alert title="Source deal is commission_locked" variant="warning">
-            {needsConfirmation.message}
-          </Alert>
-          <Text variant="microcopy">
-            These fields copy to the new deal:{" "}
-            {needsConfirmation.lockedFields.join(", ")}.
-          </Text>
-          <Flex direction="row" gap="sm">
-            <Button
-              variant="primary"
-              onClick={() => performClone(true)}
-              disabled={cloning}
-            >
-              {cloning ? "Cloning..." : "Confirm and clone"}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setNeedsConfirmation(null)}
-              disabled={cloning}
-            >
-              Cancel
-            </Button>
-          </Flex>
-        </Flex>
+      {clone.needsConfirmation ? (
+        <CloneConfirm
+          confirmation={clone.needsConfirmation}
+          cloning={clone.cloning}
+          onConfirm={() => run(true)}
+          onCancel={clone.clearConfirmation}
+        />
       ) : (
         <Flex direction="column" gap="sm">
           <Input
@@ -250,10 +306,10 @@ function CloneNextYearSection({
           />
           <Button
             variant="primary"
-            onClick={() => performClone(false)}
-            disabled={cloning || !targetYear}
+            onClick={() => run(false)}
+            disabled={clone.cloning || !targetYear}
           >
-            {cloning ? "Cloning..." : "Clone to next year"}
+            {clone.cloning ? "Cloning..." : "Clone to next year"}
           </Button>
         </Flex>
       )}
@@ -283,16 +339,50 @@ function LostCaptureForm({
     details?.closed_lost_category || ""
   );
   const [reason, setReason] = useState(details?.closed_lost_reason || "");
-  const [waitYear, setWaitYear] = useState(
+  // Single year value: the clone target, also saved as wait_until_year when the
+  // category is "Waiting for next year".
+  const [targetYear, setTargetYear] = useState(
     details?.wait_until_year || String(currentYear + 1)
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [endpointMissing, setEndpointMissing] = useState(false);
+  // After a successful "Mark as Lost & Clone", we stay mounted in this phase to
+  // drive the clone (and its locked-source confirmation) without bouncing the
+  // rep back to the form.
+  const [phase, setPhase] = useState<"form" | "clone">("form");
+  const clone = useCloneForYear(dealId);
 
-  const showWaitYear = category === "WAIT_NEXT_YEAR";
+  // Mark the deal lost (writes loss reason + moves stage). Returns true on
+  // success so the caller can chain the clone.
+  const markLost = async (): Promise<boolean> => {
+    const body: Record<string, string | number | boolean> = {
+      closed_lost_category: category,
+      closed_lost_reason: reason,
+      // Without this flag the backend writes the loss reason but leaves
+      // dealstage untouched, so the deal never actually moves to Closed Lost.
+      setStageToLost: true,
+    };
+    if (category === "WAIT_NEXT_YEAR" && targetYear) {
+      body.wait_until_year = parseInt(targetYear, 10);
+    }
+    // hubspot.fetch only allows the Authorization header. Setting Content-Type
+    // makes HubSpot reject the call with HTTP 400 before it leaves the iframe.
+    const resp = await hubspot.fetch(
+      `${API_BASE}/api/deals/${dealId}/loss-reason`,
+      { method: "PATCH", body: JSON.stringify(body) }
+    );
+    if (resp.status === 404) {
+      setEndpointMissing(true);
+      return false;
+    }
+    const result = await resp.json().catch(() => ({}));
+    if (resp.ok) return true;
+    setError(result?.message || result?.error || "Failed to save.");
+    return false;
+  };
 
-  const handleSave = async () => {
+  const handleSave = async (alsoClone: boolean) => {
     if (!category) {
       setError("Pick a category before saving.");
       return;
@@ -300,37 +390,14 @@ function LostCaptureForm({
     setError(null);
     setSaving(true);
     try {
-      const body: Record<string, string | number | boolean> = {
-        closed_lost_category: category,
-        closed_lost_reason: reason,
-        // Without this flag the backend writes the loss reason but leaves
-        // dealstage untouched, so the deal never actually moves to Closed
-        // Lost. "Mark as Lost" must always transition the stage.
-        setStageToLost: true,
-      };
-      if (showWaitYear && waitYear) {
-        body.wait_until_year = parseInt(waitYear, 10);
-      }
-      // hubspot.fetch only allows the Authorization header. Setting
-      // Content-Type causes HubSpot to reject the call with HTTP 400 before
-      // it leaves the iframe. The backend reads req.text() and JSON.parses
-      // it directly, so no Content-Type is needed.
-      const resp = await hubspot.fetch(
-        `${API_BASE}/api/deals/${dealId}/loss-reason`,
-        {
-          method: "PATCH",
-          body: JSON.stringify(body),
-        }
-      );
-      if (resp.status === 404) {
-        setEndpointMissing(true);
-        return;
-      }
-      const result = await resp.json().catch(() => ({}));
-      if (resp.ok) {
-        onSaved();
+      const ok = await markLost();
+      if (!ok) return;
+      if (alsoClone) {
+        // Deal is now Closed Lost; clone it in the same step.
+        setPhase("clone");
+        await clone.performClone(parseInt(targetYear, 10), false);
       } else {
-        setError(result?.message || result?.error || "Failed to save.");
+        onSaved();
       }
     } catch {
       setEndpointMissing(true);
@@ -339,13 +406,75 @@ function LostCaptureForm({
     }
   };
 
+  // --- Clone phase: the deal is already marked lost; finish (or retry) the
+  //     clone, then hand back to the parent. ---
+  if (phase === "clone") {
+    if (clone.result) {
+      return (
+        <Flex direction="column" gap="sm">
+          <CloneSuccess result={clone.result} targetYear={targetYear} />
+          <Button variant="primary" onClick={onSaved}>
+            Done
+          </Button>
+        </Flex>
+      );
+    }
+    if (clone.needsConfirmation) {
+      return (
+        <CloneConfirm
+          confirmation={clone.needsConfirmation}
+          cloning={clone.cloning}
+          onConfirm={() =>
+            clone
+              .performClone(parseInt(targetYear, 10), true)
+              .then((o) => o === "ok" && onSaved())
+          }
+          // Deal is already lost; skipping just leaves it un-cloned.
+          onCancel={onSaved}
+        />
+      );
+    }
+    return (
+      <Flex direction="column" gap="sm">
+        <Text format={{ fontWeight: "bold" }}>
+          Marked as Lost. Cloning to {targetYear}…
+        </Text>
+        {clone.cloning && <Text variant="microcopy">Cloning…</Text>}
+        {clone.error && (
+          <>
+            <Alert variant="error">{clone.error}</Alert>
+            <Text variant="microcopy">
+              The deal was marked Lost; the clone didn't complete.
+            </Text>
+            <Flex direction="row" gap="sm">
+              <Button
+                variant="primary"
+                onClick={() =>
+                  clone
+                    .performClone(parseInt(targetYear, 10), false)
+                    .then((o) => o === "ok" && onSaved())
+                }
+                disabled={clone.cloning}
+              >
+                Retry clone
+              </Button>
+              <Button variant="secondary" onClick={onSaved}>
+                Done (skip clone)
+              </Button>
+            </Flex>
+          </>
+        )}
+      </Flex>
+    );
+  }
+
   return (
     <Flex direction="column" gap="sm">
       <Heading level={3}>Mark as Lost</Heading>
       <Text variant="microcopy">
-        Captures why the deal didn't close so the team can learn. If
-        "Waiting for next year" is selected, you can clone it to next year
-        immediately from the Closed Lost view after saving.
+        Captures why the deal didn't close so the team can learn. You can clone
+        it into next year in the same step, or any time later from the Closed
+        Lost view.
       </Text>
 
       {error && <Alert variant="error">{error}</Alert>}
@@ -374,26 +503,31 @@ function LostCaptureForm({
         readOnly={locked}
       />
 
-      {showWaitYear && (
-        <Input
-          label="Wait until year"
-          name="wait_until_year"
-          value={waitYear}
-          onChange={(val) => setWaitYear(val as string)}
-          description="Pre-fills the target year for the immediate clone you can create from the Closed Lost view."
-          readOnly={locked}
-        />
-      )}
+      <Input
+        label="Next-year target"
+        name="clone_target_year"
+        value={targetYear}
+        onChange={(val) => setTargetYear(val as string)}
+        description="Year the deal clones into if you use Mark as Lost & Clone (also saved as the wait year when applicable)."
+        readOnly={locked}
+      />
 
       <Divider />
 
       <Flex direction="row" gap="sm" wrap="wrap">
         <Button
           variant="destructive"
-          onClick={handleSave}
+          onClick={() => handleSave(false)}
           disabled={saving || locked}
         >
           {saving ? "Saving..." : "Mark as Lost"}
+        </Button>
+        <Button
+          variant="primary"
+          onClick={() => handleSave(true)}
+          disabled={saving || locked || !targetYear}
+        >
+          {saving ? "Saving..." : `Mark as Lost & Clone to ${targetYear}`}
         </Button>
         {onCancel && (
           <Button variant="secondary" onClick={onCancel} disabled={saving}>
