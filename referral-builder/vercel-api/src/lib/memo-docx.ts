@@ -1,15 +1,17 @@
 /**
- * Renders a ComposedMemo to a .docx Buffer, matching the "Conway" memo layout:
- * a header block, an "At a Glance" comparison table, and "Quick Summaries".
- * (The long "Detailed Write-Ups" section of the original is intentionally
- * dropped — that was the "too much detail" we're trimming.)
+ * Renders a ComposedMemo to a .docx Buffer: the Camp Experts logo, a short
+ * header, an "At a Glance" comparison table, and "Quick Summaries". Each camp's
+ * summary uses the same two sections ("The feel" / "Known for") and shows the
+ * camp's location and a link to its website next to the name.
  */
 
 import {
   AlignmentType,
   BorderStyle,
   Document,
+  ExternalHyperlink,
   HeadingLevel,
+  ImageRun,
   Packer,
   Paragraph,
   ShadingType,
@@ -19,13 +21,14 @@ import {
   TextRun,
   WidthType,
 } from 'docx';
-import type { ComposedMemo, MemoTableRow } from './memo-compose';
+import type { ComposedMemo, MemoTableRow, MemoSummary } from './memo-compose';
+import { memoLogoBuffer, MEMO_LOGO_WIDTH, MEMO_LOGO_HEIGHT } from './memo-logo';
 
 // Camp Experts house accent (terracotta) used on the table header row, matching
 // the original artifact.
 const ACCENT = 'C47475';
 const HEADER_TEXT = 'FFFFFF';
-const FLAG = 'B23B3B';
+const LINK_BLUE = '0563C1';
 
 const COLUMNS: Array<{ key: keyof MemoTableRow; label: string; width: number }> = [
   { key: 'camp', label: 'Camp', width: 16 },
@@ -94,20 +97,79 @@ function sectionHeading(text: string): Paragraph {
   });
 }
 
+/** "https://www.foo.com/x" → "foo.com" for the visible link text. */
+function hostDisplay(url: string): string {
+  return (url || '')
+    .replace(/^https?:\/\//i, '')
+    .replace(/^www\./i, '')
+    .replace(/\/.*$/, '')
+    .trim();
+}
+
+/**
+ * One camp's header line: bold name, location, and a website link "next to the
+ * name". Renders as: "Chestnut Lake — Beach Lake, PA · chestnutlakecamp.com"
+ * (the domain hyperlinked).
+ */
+function summaryHeader(s: MemoSummary): Paragraph {
+  const children: Array<TextRun | ExternalHyperlink> = [
+    new TextRun({ text: s.camp, bold: true, size: 24 }),
+  ];
+  if (s.location) {
+    children.push(new TextRun({ text: `  —  ${s.location}`, size: 22 }));
+  }
+  if (s.website) {
+    children.push(new TextRun({ text: '   ·   ', size: 22, color: '999999' }));
+    children.push(
+      new ExternalHyperlink({
+        link: s.website,
+        children: [
+          new TextRun({
+            text: hostDisplay(s.website) || 'Website',
+            size: 21,
+            color: LINK_BLUE,
+            underline: {},
+          }),
+        ],
+      })
+    );
+  }
+  return new Paragraph({ spacing: { before: 200, after: 40 }, children });
+}
+
+/** A labeled summary section, e.g. "The feel: ...". */
+function summarySection(label: string, text: string): Paragraph {
+  return new Paragraph({
+    spacing: { after: 60 },
+    children: [
+      new TextRun({ text: `${label}: `, bold: true, size: 21 }),
+      new TextRun({ text: text || '', size: 21 }),
+    ],
+  });
+}
+
 /** Build the document model and pack it to a .docx Buffer. */
 export async function renderMemoDocx(memo: ComposedMemo): Promise<Buffer> {
   const children: Array<Paragraph | Table> = [];
 
-  // Header block
+  // Logo (the Camp Experts wordmark) — scaled to a header size, aspect kept.
+  const logoW = 230;
+  const logoH = Math.round((logoW * MEMO_LOGO_HEIGHT) / MEMO_LOGO_WIDTH);
   children.push(
     new Paragraph({
       alignment: AlignmentType.CENTER,
-      spacing: { after: 40 },
+      spacing: { after: 120 },
       children: [
-        new TextRun({ text: memo.title || 'Camp Experts', bold: true, size: 36, color: ACCENT }),
+        new ImageRun({
+          type: 'png',
+          data: memoLogoBuffer(),
+          transformation: { width: logoW, height: logoH },
+        }),
       ],
     })
   );
+
+  // Header block
   if (memo.preparedFor) {
     children.push(
       new Paragraph({
@@ -142,39 +204,13 @@ export async function renderMemoDocx(memo: ComposedMemo): Promise<Buffer> {
     children.push(buildTable(memo.table));
   }
 
-  // Quick Summaries
+  // Quick Summaries — same two sections for every camp.
   if (memo.summaries.length > 0) {
     children.push(sectionHeading('Quick Summaries'));
     for (const s of memo.summaries) {
-      children.push(
-        new Paragraph({
-          spacing: { before: 160, after: 40 },
-          children: [new TextRun({ text: s.header || s.camp, bold: true, size: 24 })],
-        })
-      );
-      if (s.limitedInfo) {
-        children.push(
-          new Paragraph({
-            spacing: { after: 40 },
-            children: [
-              new TextRun({
-                text: 'Limited info — no write-up on file. Built from structured data; fill in before sending.',
-                italics: true,
-                color: FLAG,
-                size: 18,
-              }),
-            ],
-          })
-        );
-      }
-      for (const line of s.lines) {
-        const runs: TextRun[] = [];
-        if (line.label) {
-          runs.push(new TextRun({ text: `${line.label}: `, bold: true, size: 21 }));
-        }
-        runs.push(new TextRun({ text: line.text || '', size: 21 }));
-        children.push(new Paragraph({ spacing: { after: 40 }, children: runs }));
-      }
+      children.push(summaryHeader(s));
+      if (s.theFeel) children.push(summarySection('The feel', s.theFeel));
+      if (s.knownFor) children.push(summarySection('Known for', s.knownFor));
     }
   }
 

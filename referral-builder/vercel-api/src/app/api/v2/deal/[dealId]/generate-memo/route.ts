@@ -71,20 +71,78 @@ async function getOwnerName(ownerId: string | null): Promise<string> {
   }
 }
 
-async function getCompanyMeta(
-  companyId: string
-): Promise<{ name: string; programId: string | null }> {
+// Full US state names → USPS abbreviation, so a memo header reads "Beach Lake,
+// PA" rather than "BEACH LAKE, Pennsylvania".
+const STATE_ABBR: Record<string, string> = {
+  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA',
+  colorado: 'CO', connecticut: 'CT', delaware: 'DE', florida: 'FL', georgia: 'GA',
+  hawaii: 'HI', idaho: 'ID', illinois: 'IL', indiana: 'IN', iowa: 'IA',
+  kansas: 'KS', kentucky: 'KY', louisiana: 'LA', maine: 'ME', maryland: 'MD',
+  massachusetts: 'MA', michigan: 'MI', minnesota: 'MN', mississippi: 'MS',
+  missouri: 'MO', montana: 'MT', nebraska: 'NE', nevada: 'NV',
+  'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
+  'north carolina': 'NC', 'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK',
+  oregon: 'OR', pennsylvania: 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
+  'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT', vermont: 'VT',
+  virginia: 'VA', washington: 'WA', 'west virginia': 'WV', wisconsin: 'WI',
+  wyoming: 'WY', 'district of columbia': 'DC',
+};
+
+function titleCase(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\b([a-z])/g, (m) => m.toUpperCase())
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function formatLocation(city: string, state: string): string {
+  const c = city ? titleCase(city) : '';
+  const st = state
+    ? STATE_ABBR[state.trim().toLowerCase()] ||
+      (state.length <= 3 ? state.toUpperCase() : titleCase(state))
+    : '';
+  return [c, st].filter(Boolean).join(', ');
+}
+
+/** Ensure a website string is a usable absolute URL (or '' if unusable). */
+function normalizeUrl(raw: string): string {
+  const v = (raw || '').trim();
+  if (!v) return '';
+  if (/^https?:\/\//i.test(v)) return v;
+  return `https://${v.replace(/^\/+/, '')}`;
+}
+
+async function getCompanyMeta(companyId: string): Promise<{
+  name: string;
+  programId: string | null;
+  location: string;
+  website: string;
+}> {
   try {
     const c: any = await hubspotClient.crm.companies.basicApi.getById(companyId, [
       'name',
       config.properties.company.programId,
+      'city',
+      'state',
+      'website',
+      'website_for_recommendation_entry',
+      'domain',
     ]);
+    const p = c?.properties ?? {};
+    // Prefer the dedicated "Website for Recommendation Entry" field, then the
+    // standard website, then the domain.
+    const website = normalizeUrl(
+      p.website_for_recommendation_entry || p.website || p.domain || ''
+    );
     return {
-      name: c?.properties?.name ?? `Company ${companyId}`,
-      programId: c?.properties?.[config.properties.company.programId] ?? null,
+      name: p.name ?? `Company ${companyId}`,
+      programId: p[config.properties.company.programId] ?? null,
+      location: formatLocation(p.city ?? '', p.state ?? ''),
+      website,
     };
   } catch {
-    return { name: `Company ${companyId}`, programId: null };
+    return { name: `Company ${companyId}`, programId: null, location: '', website: '' };
   }
 }
 
@@ -120,6 +178,8 @@ async function runMemoJob(
         return {
           companyId,
           name: meta.name,
+          location: meta.location,
+          website: meta.website,
           writeupText: writeup?.text ?? null,
           writeupType: writeup?.docType ?? null,
           sessions: sessions.map((s) => ({
