@@ -64,32 +64,51 @@ export interface MemoContext {
 export interface MemoTableRow {
   camp: string;
   location: string;
-  size: string;
-  sessions: string;
-  coed: string;
-  programStyle: string;
+  size: string; // "Mid-sized", "Large", "Intimate"
+  coed: string; // "Co-ed" | "All boys" | "All girls" | ""
+  sessions: string; // "3 / 4 wk · full summer"
+  /** Who the camp suits — positive, family-facing fit (replaces "program style"). */
+  bestFor: string;
+}
+
+/** One concrete attribute in a camp's "The Facts" list, e.g. {Electives: "Choice-based"}. */
+export interface MemoFact {
+  label: string; // "Size", "Electives", "Affiliation", "Demographic", "Ages", ...
+  value: string;
 }
 
 /**
- * One camp's Quick Summary. Every camp uses the SAME two sections — "The feel"
- * and "Known for" — so the headers stay consistent across the document. The
- * prose is parent-friendly: enough to get a feel for the camp, not a
- * microscopic point-by-point. `location` and `website` are threaded in from the
- * company record (not written by the model) so they are always accurate.
+ * One camp's Quick Summary. Every camp uses the SAME sections — "The feel",
+ * "Known for", and "The Facts" — so the headers stay consistent across the
+ * document. The prose is parent-friendly; "The Facts" carries the concrete
+ * attributes (size, electives, affiliation, demographic). `location` and
+ * `website` are threaded in from the company record (not written by the model)
+ * so they are always accurate.
  */
 export interface MemoSummary {
   camp: string; // display name, nicely cased by the model
   theFeel: string; // "The feel" — character/vibe and who thrives there
   knownFor: string; // "Known for" — signature programs / strengths
+  facts: MemoFact[]; // "The Facts" — concrete attributes (only those known/applicable)
   location: string; // from the company record, e.g. "Beach Lake, PA"
-  website: string; // from the company record (hyperlinked next to the name)
+  website: string; // from the company record (shown subtly next to the name)
 }
 
 export interface ComposedMemo {
-  title: string; // "Camp Experts"
-  preparedFor: string; // "Prepared for the Conway Family by Denise"
-  subtitle: string; // "Summer 2027 — Camp Recommendations"
-  forLine: string; // "For Archie (rising 5th) and Luke (rising 3rd)"
+  /** "the Conway Family" (or "" if not derivable from the deal name). */
+  familyName: string;
+  /** "Archie, rising 5th · Luke, rising 3rd" (or ""). */
+  childrenLine: string;
+  /** "2027" — echoed by the model, then overridden from context. */
+  summerYear: string;
+  /** Camp Expert name — echoed, then overridden from context. */
+  preparedBy: string;
+  /**
+   * A short, neutral "Advisor Take": a curated framing that contrasts the
+   * camps' character so the set feels hand-picked. NEVER ranks, recommends an
+   * order, or uses negatives.
+   */
+  advisorTake: string;
   table: MemoTableRow[];
   summaries: MemoSummary[];
 }
@@ -98,39 +117,46 @@ export interface ComposedMemo {
 // Prompt
 // ============================================================================
 
-const SYSTEM_PROMPT = `You are a Camp Experts placement advisor writing a camp recommendation memo for a prospective family. A Camp Expert sends this document to a parent after an intake call. Your job is to help the parent get a FEEL for each camp — not to brief a specialist.
+const SYSTEM_PROMPT = `You are a Camp Experts placement advisor writing a polished, premium camp recommendation memo for a prospective family. A Camp Expert sends this one-pager to a parent after an intake call. It should feel curated and advisory — like a thoughtful person narrowed the universe for this family — while helping the parent get a FEEL for each camp.
 
-WHAT THE MEMO IS:
-1. A short header.
-2. An "At a Glance" comparison table — one row per camp: Camp, Location, Size, Sessions, Co-ed / B-S, Program Style. This lets the parent take in the whole set at a glance.
-3. "Quick Summaries" — one short write-up per camp. EVERY camp uses the SAME two sections, in this order:
-   - "The feel": 1–3 sentences on the camp's character and who tends to thrive there (size, energy, setting, vibe, structure).
+WHAT THE MEMO CONTAINS:
+1. A compact header (family, summer year, children, who prepared it).
+2. An "Advisor Take": a short, warm paragraph (2–4 sentences) that frames the set and contrasts the camps' character, so the family feels these were hand-picked for them.
+3. An "At a Glance" comparison table — one row per camp: Camp, Location, Size, Co-ed, Sessions, Best For.
+4. "Quick Summaries" — one short write-up per camp. EVERY camp uses the SAME sections, in this order:
+   - "The feel": 1–3 sentences on the camp's character and who tends to thrive there (energy, setting, vibe).
    - "Known for": 1–3 sentences on its signature programs and genuine strengths.
-   That is the whole document. No extra sections, no deep dives, no "fit-for-your-family" closers, no restating the intake.
+   - "The Facts": a short list of concrete attributes (label/value pairs) the family wants at a glance. Include only the ones you actually know from the source material — typically: Size (e.g. "~425 campers"), Electives (how the activity day works, e.g. "Choice-based" or "Scheduled with some choice"), Affiliation (religious/cultural affiliation ONLY if applicable — omit entirely otherwise), Demographic (where families come from / who attends, e.g. "Tri-state, NY/NJ/PA"), and Ages or Setting if notable. Keep each value to a few words. Do not pad the list, repeat the prose, or invent facts; omit a fact rather than guess.
+   No extra sections, no deep dives, no restating the intake.
 
 HOW IT MUST READ (this is the product):
-1. WRITTEN FOR A PARENT, NOT A CAMP DIRECTOR. Give the big picture — the kind of place it is, the experience a kid would have. A parent is trying to get a feel for the different options. Skip the microscopic operational detail (exact bunk counts, staff names, retention percentages, dining logistics, precise acreage). Those details are for our experts, not the parent.
-2. EASY TO READ. Plain, warm, confident sentences. No jargon, no bullet soup, no hedging ("could be a great fit", "worth considering"), no AI-sounding constructions. A real person wrote this.
-3. CONSISTENT. Same two section headers for every camp, similar length and depth across all of them. The set should feel even-handed.
-4. PRESENTS A SET, NOT A PICK. Put the camps forward as a slate of good options. Do not rank them or steer toward one.
-5. POSITIVE AND NEUTRAL. Describe what each camp IS and what it's good at. Do NOT include trade-offs, drawbacks, "things to confirm", gaps, weaknesses, or anything that reads as a negative or a caveat. If something doesn't apply or you don't know it, simply leave it out — never write a placeholder like "Confirm" or "TBD" and never flag missing information.
+1. WRITTEN FOR A PARENT, NOT A CAMP DIRECTOR. Give the big picture — the kind of place it is, the experience a kid would have. Skip microscopic operational detail (exact bunk counts, staff names, retention percentages, acreage). Those are for our experts, not the parent.
+2. EASY TO READ AND ELEGANT. Plain, warm, confident sentences. No jargon, no bullet soup, no hedging ("could be a great fit", "worth considering"), no AI-sounding constructions. A real, tasteful advisor wrote this.
+   NO FILLER. Cut empty, generic feel-good lines — never write things like "Any of these would give the kids a wonderful summer", "you can't go wrong", "all three are fantastic options", or similar platitudes. Every sentence must carry real, specific information. The Advisor Take in particular must END on substance (a genuine point of difference), not a reassuring closer.
+3. CONSISTENT. Same two section headers for every camp; similar length and depth across all of them.
+4. PRESENTS A SET, NOT A PICK. Put the camps forward as a slate of strong options. The Advisor Take may contrast their character, but it must NOT rank them, recommend an order, say which to "start with", or imply one is better than another.
+5. POSITIVE AND NEUTRAL. Describe what each camp IS and what it's good at. Do NOT include trade-offs, drawbacks, "considerations", "things to confirm", gaps, weaknesses, or anything that reads as a negative or a caveat. If something doesn't apply or you don't know it, leave it out — never write a placeholder like "Confirm" or "TBD".
 
 GROUNDING RULES:
 - Use ONLY the source material provided for each camp (its write-up and its structured session/tuition data). Do not invent facts, prices, or specifics.
-- LOCATION is provided to you from our records — copy it into the table's Location column exactly as given; do not derive your own.
-- For Co-ed / B-S, state whether the camp is co-ed, all-boys, or all-girls based on the write-up. If the write-up genuinely doesn't say, leave the column blank — never write "Confirm".
-- Fill the table's Size and Program Style columns from the write-up at a parent-friendly altitude (e.g. Size: "Mid-sized"; Program Style: "Traditional, broad activity menu"). Fill Sessions from the structured session data (lengths in weeks) when available, otherwise from the write-up.
-- If a camp has no write-up on file, still include it: fill what the structured data supports and keep "The feel" / "Known for" brief and general. Do not invent narrative and do not flag it as missing.
-- Honor the rep's special instructions for tone and emphasis — but never let them push you into steering, negativity, or fabrication.
+- HEADER: derive familyName (e.g. "the Conway Family") and childrenLine (e.g. "Archie, rising 5th · Luke, rising 3rd") from the deal name / context if present; otherwise leave them blank. Echo summerYear and preparedBy from the context.
+- LOCATION is provided from our records — copy it into the table's Location column exactly as given; do not derive your own.
+- CO-ED: state whether the camp is co-ed, all boys, or all girls based on the write-up. If the write-up genuinely doesn't say, leave it blank — never write "Confirm".
+- SIZE: a parent-friendly word/phrase (e.g. "Intimate", "Mid-sized", "Large").
+- BEST FOR: one short, positive phrase on the kind of camper or family the camp suits (e.g. "First-time campers who want warmth and choice"). This replaces dry "program style" language. Never phrase it as who it is NOT for.
+- SESSIONS: from the structured session data (lengths in weeks) when available, otherwise from the write-up.
+- If a camp has no write-up on file, still include it: fill what the structured data supports and keep everything brief and general. Do not invent narrative and do not flag it as missing.
+- Honor the rep's special instructions for tone and emphasis — but never let them push you into ranking, negativity, or fabrication.
 - Order camps exactly as they were provided.`;
 
 export function buildUserPrompt(camps: MemoCampInput[], ctx: MemoContext): string {
   const lines: string[] = [];
   lines.push('CONTEXT FOR THE HEADER:');
-  lines.push(`- Prepared for: ${ctx.preparedFor || '(unknown — use a neutral greeting)'}`);
-  lines.push(`- Camp Expert (author): ${ctx.expertName || '(unknown)'}`);
+  lines.push(`- Camp Expert / preparedBy (author): ${ctx.expertName || '(unknown)'}`);
   lines.push(`- Summer year: ${ctx.summerYear || '(unknown)'}`);
-  lines.push(`- Children / for-line: ${ctx.forLine || '(unknown — omit if you have nothing)'}`);
+  lines.push(
+    `- familyName + childrenLine: derive from the deal name in the instructions below (e.g. "Conway, Archie | 2027" → familyName "the Conway Family", childrenLine "Archie"). Leave blank if not derivable.`
+  );
   lines.push('');
   if (ctx.specialInstructions && ctx.specialInstructions.trim()) {
     lines.push('SPECIAL INSTRUCTIONS FROM THE CAMP EXPERT (steer tone/framing/emphasis, never fabricate):');
@@ -188,7 +214,7 @@ export function buildUserPrompt(camps: MemoCampInput[], ctx: MemoContext): strin
   });
 
   lines.push(
-    'Produce the memo as structured JSON: a header, an At-a-Glance table (one row per camp, in order), and Quick Summaries (one per camp, in order). Each summary has exactly two fields — "theFeel" and "knownFor" — both parent-friendly, positive, and similar in length across camps. No trade-offs, caveats, or placeholders.'
+    'Produce the memo as structured JSON: header fields (familyName, childrenLine, summerYear, preparedBy), a short neutral advisorTake (no filler closer), an At-a-Glance table (one row per camp, in order, with a positive "bestFor"), and Quick Summaries (one per camp, in order, each with "theFeel", "knownFor", and a "facts" list of concrete attributes). Keep it warm, even-handed, and positive — no ranking, no trade-offs, no placeholders, no generic feel-good filler.'
   );
   return lines.join('\n');
 }
@@ -202,10 +228,11 @@ const MEMO_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    title: { type: 'string' },
-    preparedFor: { type: 'string' },
-    subtitle: { type: 'string' },
-    forLine: { type: 'string' },
+    familyName: { type: 'string' },
+    childrenLine: { type: 'string' },
+    summerYear: { type: 'string' },
+    preparedBy: { type: 'string' },
+    advisorTake: { type: 'string' },
     table: {
       type: 'array',
       items: {
@@ -215,11 +242,11 @@ const MEMO_SCHEMA = {
           camp: { type: 'string' },
           location: { type: 'string' },
           size: { type: 'string' },
-          sessions: { type: 'string' },
           coed: { type: 'string' },
-          programStyle: { type: 'string' },
+          sessions: { type: 'string' },
+          bestFor: { type: 'string' },
         },
-        required: ['camp', 'location', 'size', 'sessions', 'coed', 'programStyle'],
+        required: ['camp', 'location', 'size', 'coed', 'sessions', 'bestFor'],
       },
     },
     summaries: {
@@ -231,12 +258,32 @@ const MEMO_SCHEMA = {
           camp: { type: 'string' },
           theFeel: { type: 'string' },
           knownFor: { type: 'string' },
+          facts: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                label: { type: 'string' },
+                value: { type: 'string' },
+              },
+              required: ['label', 'value'],
+            },
+          },
         },
-        required: ['camp', 'theFeel', 'knownFor'],
+        required: ['camp', 'theFeel', 'knownFor', 'facts'],
       },
     },
   },
-  required: ['title', 'preparedFor', 'subtitle', 'forLine', 'table', 'summaries'],
+  required: [
+    'familyName',
+    'childrenLine',
+    'summerYear',
+    'preparedBy',
+    'advisorTake',
+    'table',
+    'summaries',
+  ],
 } as const;
 
 // ============================================================================
@@ -317,24 +364,28 @@ export async function composeMemo(
   } catch {
     throw new MemoComposeError('Claude returned malformed memo JSON.');
   }
+  // Year and author are known facts from context — don't trust the model's echo.
+  if (ctx.summerYear) parsed.summerYear = ctx.summerYear;
+  if (ctx.expertName) parsed.preparedBy = ctx.expertName;
   return applyCampFacts(normalizeComposed(parsed), camps);
 }
 
 /** Defensive normalization so the docx renderer never sees undefined holes. */
 function normalizeComposed(m: ComposedMemo): ComposedMemo {
   return {
-    title: m.title || 'Camp Experts',
-    preparedFor: m.preparedFor || '',
-    subtitle: m.subtitle || '',
-    forLine: m.forLine || '',
+    familyName: m.familyName || '',
+    childrenLine: m.childrenLine || '',
+    summerYear: m.summerYear || '',
+    preparedBy: m.preparedBy || '',
+    advisorTake: m.advisorTake || '',
     table: Array.isArray(m.table)
       ? m.table.map((r) => ({
           camp: r.camp || '',
           location: r.location || '',
           size: r.size || '',
-          sessions: r.sessions || '',
           coed: r.coed || '',
-          programStyle: r.programStyle || '',
+          sessions: r.sessions || '',
+          bestFor: r.bestFor || '',
         }))
       : [],
     summaries: Array.isArray(m.summaries)
@@ -342,6 +393,11 @@ function normalizeComposed(m: ComposedMemo): ComposedMemo {
           camp: s.camp || '',
           theFeel: s.theFeel || '',
           knownFor: s.knownFor || '',
+          facts: Array.isArray(s.facts)
+            ? s.facts
+                .map((f) => ({ label: f?.label || '', value: f?.value || '' }))
+                .filter((f) => f.label && f.value)
+            : [],
           location: '',
           website: '',
         }))

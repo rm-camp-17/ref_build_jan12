@@ -7,26 +7,28 @@ import { renderMemoDocx, memoFileName } from '../lib/memo-docx';
 import type { ComposedMemo } from '../lib/memo-compose';
 
 const MEMO: ComposedMemo = {
-  title: 'Camp Experts',
-  preparedFor: 'Prepared for the Conway Family by Denise',
-  subtitle: 'Summer 2027 — Camp Recommendations',
-  forLine: 'For Archie (rising 5th) and Luke (rising 3rd)',
+  familyName: 'the Conway Family',
+  childrenLine: 'Archie, rising 5th · Luke, rising 3rd',
+  summerYear: '2027',
+  preparedBy: 'Denise',
+  advisorTake:
+    'These three share a warm, traditional core but each has its own character — from the polished energy of Timber Lake West to the down-to-earth feel of the others.',
   table: [
     {
       camp: 'Timber Lake West',
       location: 'Roscoe, NY',
-      size: '280–325',
-      sessions: '4 wk / 3 wk',
+      size: 'Mid-sized',
       coed: 'Co-ed',
-      programStyle: 'Highly structured',
+      sessions: '4 wk / 3 wk',
+      bestFor: 'Kids who love a high-energy, full day',
     },
     {
       camp: 'Chestnut Lake',
       location: 'Beach Lake, PA',
-      size: '425+',
-      sessions: '3 wk / 4 wk',
+      size: 'Mid-sized',
       coed: 'Co-ed',
-      programStyle: 'Balanced',
+      sessions: '3 wk / 4 wk / full',
+      bestFor: 'A warm, flexible first sleepaway',
     },
   ],
   summaries: [
@@ -34,6 +36,10 @@ const MEMO: ComposedMemo = {
       camp: 'Timber Lake West',
       theFeel: 'A polished, high-energy co-ed camp where kids settle in fast.',
       knownFor: 'Strong waterfront, big-production evening programs, and trips.',
+      facts: [
+        { label: 'Size', value: '~300 campers' },
+        { label: 'Electives', value: 'Scheduled with some choice' },
+      ],
       location: 'Roscoe, NY',
       website: 'https://www.timberlakewest.com',
     },
@@ -41,6 +47,7 @@ const MEMO: ComposedMemo = {
       camp: 'Mystery Camp',
       theFeel: 'A warm, traditional community with a broad activity menu.',
       knownFor: 'Classic camp staples done well.',
+      facts: [],
       location: '',
       website: '',
     },
@@ -67,6 +74,16 @@ describe('renderMemoDocx', () => {
     expect(rels).toContain('https://www.timberlakewest.com');
   });
 
+  test('renders the "The Facts" section with its attributes', async () => {
+    const JSZip = require('jszip');
+    const buf = await renderMemoDocx(MEMO);
+    const zip = await JSZip.loadAsync(buf);
+    const doc = await zip.file('word/document.xml').async('string');
+    expect(doc).toContain('The Facts');
+    expect(doc).toContain('Electives');
+    expect(doc).toContain('Scheduled with some choice');
+  });
+
   test('renders even with empty table / summaries', async () => {
     const buf = await renderMemoDocx({
       ...MEMO,
@@ -84,11 +101,8 @@ describe('memoFileName', () => {
     expect(name).not.toMatch(/[^a-zA-Z0-9_.\-]/);
   });
 
-  test('falls back to the deal id when no header text', () => {
-    const name = memoFileName(
-      { ...MEMO, preparedFor: '', subtitle: '' },
-      '999'
-    );
+  test('falls back to the deal id when no family name', () => {
+    const name = memoFileName({ ...MEMO, familyName: '' }, '999');
     expect(name).toContain('999');
   });
 });

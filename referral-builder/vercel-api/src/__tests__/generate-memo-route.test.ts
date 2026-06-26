@@ -161,10 +161,11 @@ beforeEach(() => {
     )
   );
   mockCompose.mockResolvedValue({
-    title: 'Camp Experts',
-    preparedFor: 'Prepared for the Conway Family by Denise',
-    subtitle: 'Summer 2027 — Camp Recommendations',
-    forLine: '',
+    familyName: 'the Conway Family',
+    childrenLine: 'Archie, rising 5th',
+    summerYear: '2027',
+    preparedBy: 'Denise',
+    advisorTake: 'Three strong, warm options.',
     table: [],
     summaries: [],
   });
