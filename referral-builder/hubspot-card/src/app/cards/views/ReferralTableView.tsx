@@ -203,6 +203,10 @@ export function ReferralTableView({
   const [companyQuery, setCompanyQuery] = useState("");
   const [companyOptions, setCompanyOptions] = useState<Option[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  // The label for the currently-selected company, kept alongside the id so the
+  // Select can always render a name even after the search results (and thus
+  // companyOptions) are cleared — otherwise the dropdown shows the raw id.
+  const [selectedCompanyName, setSelectedCompanyName] = useState("");
 
   // Form fields with defaults
   const [selectedStatus, setSelectedStatus] = useState(DEFAULTS.REFERRAL_STATUS);
@@ -237,6 +241,23 @@ export function ReferralTableView({
   }, [dealId, selectedCompanyId, busy, locked]);
 
   const formStep = !selectedCompanyId ? 0 : canCreate ? 2 : 1;
+
+  // Options for the company Select. Always include the currently-selected
+  // company so the dropdown shows its name even after the search results have
+  // been cleared (e.g. the rep emptied the search box) — without this the
+  // Select falls back to displaying the raw company id.
+  const companySelectOptions = useMemo<Option[]>(() => {
+    if (
+      selectedCompanyId &&
+      !companyOptions.some((o) => o.value === selectedCompanyId)
+    ) {
+      return [
+        { label: selectedCompanyName || selectedCompanyId, value: selectedCompanyId },
+        ...companyOptions,
+      ];
+    }
+    return companyOptions;
+  }, [companyOptions, selectedCompanyId, selectedCompanyName]);
 
   // Item 8: the note from the most recently created referral, so the rep can
   // pull it into a new referral instead of retyping the same company note.
@@ -315,10 +336,12 @@ export function ReferralTableView({
       })
     );
     setDealCompanies(companies);
-    if (companies.length === 1 && !selectedCompanyId) {
-      setSelectedCompanyId(companies[0].id);
-    }
-  }, [dealId, selectedCompanyId, details]);
+    // Note: we intentionally do NOT auto-select the deal's existing company
+    // into the Create Referral form. Doing so pre-filled the Select with a
+    // company the rep hadn't searched for, and (because it was never added to
+    // companyOptions) the dropdown rendered the raw company id. The Create form
+    // starts empty; the rep searches and picks.
+  }, [dealId, details]);
 
   const loadPropertyDefinitions = useCallback(async () => {
     try {
@@ -376,15 +399,11 @@ export function ReferralTableView({
   const handleCopyReferral = useCallback(
     (sourceReferral: HouseholdReferral, sourceDeal: HouseholdDeal) => {
       if (sourceReferral.company?.id) {
+        const label =
+          sourceReferral.company.name || `Company ${sourceReferral.company.id}`;
         setSelectedCompanyId(sourceReferral.company.id);
-        setCompanyOptions([
-          {
-            label:
-              sourceReferral.company.name ||
-              `Company ${sourceReferral.company.id}`,
-            value: sourceReferral.company.id,
-          },
-        ]);
+        setSelectedCompanyName(label);
+        setCompanyOptions([{ label, value: sourceReferral.company.id }]);
         setCompanyQuery(sourceReferral.company.name || "");
       }
       if (sourceReferral.note) {
@@ -436,6 +455,7 @@ export function ReferralTableView({
 
       setNote("");
       setSelectedCompanyId("");
+      setSelectedCompanyName("");
       setCompanyQuery("");
       setCompanyOptions([]);
       setSelectedStatus(DEFAULTS.REFERRAL_STATUS);
@@ -658,10 +678,14 @@ export function ReferralTableView({
             <Select
               name="company"
               label="Select Company"
-              options={companyOptions}
+              options={companySelectOptions}
               value={selectedCompanyId}
               onChange={(val: string) => {
                 setSelectedCompanyId(val);
+                // Remember the chosen company's label so the Select keeps
+                // showing the name if the search results are later cleared.
+                const picked = companyOptions.find((o) => o.value === val);
+                setSelectedCompanyName(picked?.label ?? "");
                 setError(null);
               }}
               required
