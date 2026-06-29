@@ -170,6 +170,38 @@ describe('PATCH /api/deals/[dealId]/loss-reason', () => {
     expect(mockUpdateDeal).not.toHaveBeenCalled();
   });
 
+  test('RETURNING_CAMPER without wait_until_year is accepted', async () => {
+    const req = makeReq({
+      closed_lost_category: 'RETURNING_CAMPER',
+      closed_lost_reason: 'camper coming back, no commission',
+    });
+    const res = await PATCH(req, { params: { dealId: '100' } });
+    expect(res.status).toBe(200);
+    expect(mockUpdateDeal).toHaveBeenCalledWith(
+      '100',
+      expect.objectContaining({ closed_lost_category: 'RETURNING_CAMPER' })
+    );
+    // No wait year provided → none written.
+    expect(mockUpdateDeal.mock.calls[0][1].wait_until_year).toBeUndefined();
+  });
+
+  test('RETURNING_CAMPER with a future wait_until_year writes it', async () => {
+    const targetYear = CURRENT_YEAR + 1;
+    const req = makeReq({
+      closed_lost_category: 'RETURNING_CAMPER',
+      wait_until_year: targetYear,
+    });
+    const res = await PATCH(req, { params: { dealId: '100' } });
+    expect(res.status).toBe(200);
+    expect(mockUpdateDeal).toHaveBeenCalledWith(
+      '100',
+      expect.objectContaining({
+        closed_lost_category: 'RETURNING_CAMPER',
+        wait_until_year: String(targetYear),
+      })
+    );
+  });
+
   test('non-WAIT category with wait_until_year rejected with 400 (mismatch)', async () => {
     const req = makeReq({
       closed_lost_category: 'OTHER',
