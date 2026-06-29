@@ -41,12 +41,17 @@ import { API_BASE, DealDetails, isCommissionLocked } from "./types";
 
 const LOST_CATEGORY_OPTIONS = [
   { label: "Waiting for next year", value: "WAIT_NEXT_YEAR" },
+  { label: "Returning camper (no commission)", value: "RETURNING_CAMPER" },
   { label: "Picked another program", value: "OTHER_PROGRAM" },
   { label: "Aging out / staying home", value: "OUT_OF_MARKET" },
   { label: "Tuition / can't afford", value: "MONEY" },
   { label: "Family went silent", value: "NON_RESPONSIVE" },
   { label: "Other (see notes)", value: "OTHER" },
 ];
+
+// Lost categories that carry a next-year follow-up (saved as wait_until_year
+// and used to pre-fill the clone). Keep in sync with the backend route.
+const WAIT_YEAR_CATEGORIES = ["WAIT_NEXT_YEAR", "RETURNING_CAMPER"];
 
 function categoryLabel(value: string | null): string {
   if (!value) return "—";
@@ -363,7 +368,7 @@ function LostCaptureForm({
       // dealstage untouched, so the deal never actually moves to Closed Lost.
       setStageToLost: true,
     };
-    if (category === "WAIT_NEXT_YEAR" && targetYear) {
+    if (WAIT_YEAR_CATEGORIES.includes(category) && targetYear) {
       body.wait_until_year = parseInt(targetYear, 10);
     }
     // hubspot.fetch only allows the Authorization header. Setting Content-Type

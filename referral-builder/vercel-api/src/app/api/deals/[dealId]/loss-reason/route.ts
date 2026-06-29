@@ -9,11 +9,12 @@
  *
  * Body:
  *   {
- *     closed_lost_category: 'WAIT_NEXT_YEAR' | 'OTHER_PROGRAM'
- *                           | 'OUT_OF_MARKET' | 'MONEY'
+ *     closed_lost_category: 'WAIT_NEXT_YEAR' | 'RETURNING_CAMPER'
+ *                           | 'OTHER_PROGRAM' | 'OUT_OF_MARKET' | 'MONEY'
  *                           | 'NON_RESPONSIVE' | 'OTHER',
  *     closed_lost_reason?: string,
- *     wait_until_year?: number,    // required iff category === 'WAIT_NEXT_YEAR'
+ *     wait_until_year?: number,    // required for WAIT_NEXT_YEAR; optional for
+ *                                  // RETURNING_CAMPER; rejected otherwise
  *     setStageToLost?: boolean     // when true, also patches dealstage = closedlost
  *   }
  *
@@ -21,13 +22,13 @@
  *   { success: true, advancedToLost: boolean }
  *
  * Validation:
- *   - category must be one of the six above
- *   - if category === 'WAIT_NEXT_YEAR':
- *       wait_until_year is required, must be a number, must be >= currentYear.
- *       If the rep enters currentYear (a no-op meaning "wait until this
- *       year"), we floor up to currentYear + 1.
- *   - if category !== 'WAIT_NEXT_YEAR' AND wait_until_year provided:
- *       reject (mismatch — the property only makes sense for WAIT_NEXT_YEAR).
+ *   - category must be one of the seven above
+ *   - wait_until_year, when provided, must be an integer >= currentYear (a bare
+ *     currentYear floors up to currentYear + 1). It is required for
+ *     WAIT_NEXT_YEAR, allowed for RETURNING_CAMPER, and rejected for the rest.
+ *   - "RETURNING_CAMPER" = the camper is coming back (often re-enrolling
+ *     directly, so no commission this year); the rep clones to next year to
+ *     keep following the relationship.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -45,6 +46,7 @@ import {
 
 const VALID_LOSS_CATEGORIES = [
   'WAIT_NEXT_YEAR',
+  'RETURNING_CAMPER',
   'OTHER_PROGRAM',
   'OUT_OF_MARKET',
   'MONEY',
@@ -53,6 +55,16 @@ const VALID_LOSS_CATEGORIES = [
 ] as const;
 
 type LossCategory = (typeof VALID_LOSS_CATEGORIES)[number];
+
+// Categories that carry a next-year follow-up year (wait_until_year): the
+// family is expected back next year, so we record the year for follow-up and
+// to pre-fill the clone. Required for WAIT_NEXT_YEAR (the family explicitly
+// said "next year"); optional for RETURNING_CAMPER (returning camper, no
+// commission this year — clone to keep following the relationship).
+const WAIT_YEAR_CATEGORIES: readonly LossCategory[] = [
+  'WAIT_NEXT_YEAR',
+  'RETURNING_CAMPER',
+];
 
 const CLOSED_LOST_STAGE = 'closedlost';
 
@@ -99,17 +111,29 @@ export async function PATCH(
   // wait_until_year validation
   let resolvedWaitUntilYear: number | undefined;
   const waitProvided = body.wait_until_year !== undefined && body.wait_until_year !== null;
+  const usesWaitYear = WAIT_YEAR_CATEGORIES.includes(category as LossCategory);
 
-  if (category === 'WAIT_NEXT_YEAR') {
-    if (!waitProvided) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: 'wait_until_year is required when closed_lost_category is WAIT_NEXT_YEAR.',
-        },
-        { status: 400 }
-      );
-    }
+  // Required for WAIT_NEXT_YEAR (the family explicitly named a year).
+  if (category === 'WAIT_NEXT_YEAR' && !waitProvided) {
+    return NextResponse.json(
+      {
+        success: false,
+        message: 'wait_until_year is required when closed_lost_category is WAIT_NEXT_YEAR.',
+      },
+      { status: 400 }
+    );
+  }
+  // Only the next-year categories may carry a wait year.
+  if (waitProvided && !usesWaitYear) {
+    return NextResponse.json(
+      {
+        success: false,
+        message: 'wait_until_year is only valid for WAIT_NEXT_YEAR or RETURNING_CAMPER.',
+      },
+      { status: 400 }
+    );
+  }
+  if (waitProvided) {
     const wy = Number(body.wait_until_year);
     if (!Number.isFinite(wy) || !Number.isInteger(wy)) {
       return NextResponse.json(
@@ -127,19 +151,10 @@ export async function PATCH(
         { status: 400 }
       );
     }
-    // Floor: a rep entering currentYear means "wait until this year",
-    // which is a no-op. Bump it to currentYear + 1 so the immediate
-    // clone-to-next-year offered on the Closed Lost view targets a real
-    // future year.
+    // Floor: a rep entering currentYear means "wait until this year", which is
+    // a no-op. Bump it to currentYear + 1 so the clone-to-next-year offered on
+    // the Closed Lost view targets a real future year.
     resolvedWaitUntilYear = wy === currentYear ? currentYear + 1 : wy;
-  } else if (waitProvided) {
-    return NextResponse.json(
-      {
-        success: false,
-        message: 'wait_until_year only valid for WAIT_NEXT_YEAR category.',
-      },
-      { status: 400 }
-    );
   }
 
   // Spec §5.1, §6.1 — closed_lost_* aren't sacred but the pattern stays
