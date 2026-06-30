@@ -258,7 +258,8 @@ describe('cloneForYear — dedup', () => {
 
 describe('cloneForYear — happy path', () => {
   test('creates new deal + ledger row, never writes ce_* fields (Rule 1)', async () => {
-    mockSourceDeal();
+    // Non-won source (Closed Lost) with no referrals → New Lead landing stage.
+    mockSourceDeal({ dealstage: 'closedlost' });
     mockHubspot.crm.deals.basicApi.create.mockResolvedValue({ id: '777' });
 
     const result = await cloneForYear({
@@ -281,8 +282,8 @@ describe('cloneForYear — happy path', () => {
     expect(props.year1).toBe('2027');
     expect(props.dealname).toBe('Acme Child | 2027');
     expect(props.pipeline).toBe('default');
-    // Item 1: no referrals on the source (getAssociatedIds mocked to []) →
-    // the clone lands at New Lead.
+    // No referrals on the source (getAssociatedIds mocked to []) and the
+    // source is not Closed Won → the clone lands at New Lead.
     expect(props.dealstage).toBe('appointmentscheduled'); // newLead
 
     // Billing-critical fields propagated
@@ -314,10 +315,10 @@ describe('cloneForYear — happy path', () => {
     );
   });
 
-  test('lands at Recommendation Plan Presented when the source has referrals (item 1)', async () => {
-    mockSourceDeal();
+  test('lands at Recommendation Plan Presented when a non-won source has referrals', async () => {
+    // Non-won source (Closed Lost) with referrals → resume at the recommendation.
+    mockSourceDeal({ dealstage: 'closedlost' });
     mockHubspot.crm.deals.basicApi.create.mockResolvedValue({ id: '777' });
-    // Source has referrals → clone resumes from the recommendation stage.
     mockGetAssociatedIds.mockResolvedValue(['REF1', 'REF2']);
 
     const result = await cloneForYear({ sourceDealId: '100', targetYear: 2027 });
@@ -325,6 +326,21 @@ describe('cloneForYear — happy path', () => {
     expect(result.success).toBe(true);
     const props = mockHubspot.crm.deals.basicApi.create.mock.calls[0][0].properties;
     expect(props.dealstage).toBe('presentationscheduled'); // recommendationPresented
+  });
+
+  test('lands at Tuition Undecided when the source is Closed Won', async () => {
+    // Closed Won source (decisionmakerboughtin) → the family already chose this
+    // camp; the clone resumes at Tuition Undecided to enter next year's tuition.
+    mockSourceDeal({ dealstage: 'decisionmakerboughtin' });
+    mockHubspot.crm.deals.basicApi.create.mockResolvedValue({ id: '777' });
+    // Referrals present or not shouldn't matter for a won source.
+    mockGetAssociatedIds.mockResolvedValue(['REF1', 'REF2']);
+
+    const result = await cloneForYear({ sourceDealId: '100', targetYear: 2027 });
+
+    expect(result.success).toBe(true);
+    const props = mockHubspot.crm.deals.basicApi.create.mock.calls[0][0].properties;
+    expect(props.dealstage).toBe('1282923123'); // tuitionUndecided
   });
 
   test('clones with a derived {child}|{year} key when deal_key is blank (item 1)', async () => {

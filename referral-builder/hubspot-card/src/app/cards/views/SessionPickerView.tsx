@@ -54,6 +54,9 @@ export function SessionPickerView({
   const [error, setError] = useState<string | null>(null);
 
   const sessions = cardData.sessions ?? [];
+  // No sessions on file for this camp/year (common on a freshly-cloned Won
+  // deal) → go straight to manual tuition entry instead of an empty picker.
+  const noSessions = sessions.length === 0;
   const sessionOptions = [
     ...sessions.map((s) => ({
       label: `${s.name} (${s.startDate} – ${s.endDate}) · ${s.weeks}wk · ${s.currency} $${s.tuition.toLocaleString()}`,
@@ -98,13 +101,25 @@ export function SessionPickerView({
     }
   };
 
-  if (showCustomForm) {
+  // Manual tuition entry: either the rep picked "Other", or there are no
+  // sessions on file at all (then it's the only path, with no "Back").
+  if (showCustomForm || noSessions) {
     return (
       <CustomSessionForm
         dealId={dealId}
-        onCancel={() => setShowCustomForm(false)}
         onSubmitted={onSubmitted}
         locked={locked}
+        title={noSessions ? "Enter Tuition" : "Custom Session (Requires Approval)"}
+        contextNote={
+          noSessions
+            ? cardData.sessionsNote ||
+              `No sessions on file for ${cardData.programName || "this camp"} in ${String(
+                cardData.year ?? ""
+              )}. Enter the tuition manually.`
+            : undefined
+        }
+        onCancel={noSessions ? undefined : () => setShowCustomForm(false)}
+        onMarkLost={noSessions ? onMarkLost : undefined}
       />
     );
   }
@@ -159,16 +174,26 @@ export function SessionPickerView({
 
 interface CustomSessionFormProps {
   dealId: string;
-  onCancel: () => void;
   onSubmitted: () => void;
   locked: boolean;
+  /** Heading — e.g. "Enter Tuition" (no sessions) vs "Custom Session". */
+  title?: string;
+  /** Optional info note shown above the form (camp/year context). */
+  contextNote?: string;
+  /** "Back" button — omitted when this is the only path (no sessions). */
+  onCancel?: () => void;
+  /** "Mark as Lost" button — shown in the no-sessions manual-entry path. */
+  onMarkLost?: () => void;
 }
 
 function CustomSessionForm({
   dealId,
-  onCancel,
   onSubmitted,
   locked,
+  title = "Custom Session (Requires Approval)",
+  contextNote,
+  onCancel,
+  onMarkLost,
 }: CustomSessionFormProps) {
   const [description, setDescription] = useState("");
   const [tuition, setTuition] = useState("");
@@ -214,7 +239,8 @@ function CustomSessionForm({
 
   return (
     <Flex direction="column" gap="sm">
-      <Heading level={3}>Custom Session (Requires Approval)</Heading>
+      <Heading level={3}>{title}</Heading>
+      {contextNote && <Alert variant="info">{contextNote}</Alert>}
       {error && <Alert variant="error">{error}</Alert>}
       <Input
         label="Description"
@@ -244,17 +270,24 @@ function CustomSessionForm({
         onChange={(val) => setWeeks(val as string)}
         readOnly={locked}
       />
-      <Flex direction="row" gap="sm">
+      <Flex direction="row" gap="sm" wrap="wrap">
         <Button
           variant="primary"
           onClick={handleSubmit}
           disabled={submitting || locked}
         >
-          {submitting ? "Submitting..." : "Submit Custom Session"}
+          {submitting ? "Submitting..." : "Save Tuition"}
         </Button>
-        <Button variant="secondary" onClick={onCancel}>
-          Back
-        </Button>
+        {onCancel && (
+          <Button variant="secondary" onClick={onCancel}>
+            Back
+          </Button>
+        )}
+        {onMarkLost && (
+          <Button variant="destructive" onClick={onMarkLost} disabled={locked}>
+            Mark as Lost
+          </Button>
+        )}
       </Flex>
     </Flex>
   );

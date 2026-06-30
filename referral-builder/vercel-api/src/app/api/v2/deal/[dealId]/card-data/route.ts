@@ -83,10 +83,11 @@ export async function GET(
 
     const { sessions, programName, error } = sessionResult;
 
-    if (error && sessions.length === 0) {
-      return NextResponse.json({ status: 'inactive', message: error });
-    }
-
+    // At Tuition Undecided the deal is ALWAYS eligible to set tuition. When no
+    // sessions are on file (e.g. a freshly-cloned Won deal whose camp has no
+    // sessions loaded for the new year), return an eligible payload with an
+    // empty list plus a note, so the card shows the manual-entry path instead
+    // of a dead-end "card not active" alert.
     return NextResponse.json({
       status: 'eligible',
       sessions,
@@ -94,6 +95,7 @@ export async function GET(
       programId: deal.program_id,
       year: deal.year1 ? parseInt(deal.year1, 10) : null,
       referralContext,
+      sessionsNote: sessions.length === 0 ? error : null,
     });
   } catch (err: any) {
     console.error(
