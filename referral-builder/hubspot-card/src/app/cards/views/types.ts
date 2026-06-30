@@ -55,6 +55,9 @@ export type CardData =
       programId: string | null;
       year: number | null;
       referralContext: ReferralContext | null;
+      // Set when sessions is empty (none on file for this camp/year) — the
+      // picker shows manual tuition entry with this note instead of a list.
+      sessionsNote?: string | null;
     };
 
 // ============================================================================

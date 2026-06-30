@@ -544,9 +544,13 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
   // a stable, searchable dedup key instead of refusing.
   const sourceKey = resolveSourceDedupKey(source, sourceDealId);
 
-  // Item 1: pick the landing stage from whether referrals carry over.
-  // Recommendation Plan Presented when the source has referrals (the rep
-  // resumes from the recommendation), New Lead when it has none.
+  // Pick the landing stage:
+  //   - Closed Won source → the family already chose this camp last year, so
+  //     the clone resumes at "Program Selected - Tuition Undecided" (they just
+  //     need next year's tuition, entered from the Session step). The clone
+  //     carries program_id/programname, so the Session step knows the camp.
+  //   - Otherwise → Recommendation Plan Presented when referrals carry over
+  //     (the rep resumes from the recommendation), else New Lead.
   let sourceReferralCount = 0;
   try {
     const ids = await getAssociatedIds(
@@ -561,10 +565,12 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
       err.message
     );
   }
-  const landingStage =
-    sourceReferralCount > 0
-      ? config.stages.recommendationPresented
-      : config.stages.newLead;
+  const sourceIsClosedWon = source.dealstage === config.stages.programSelected;
+  const landingStage = sourceIsClosedWon
+    ? config.stages.tuitionUndecided
+    : sourceReferralCount > 0
+    ? config.stages.recommendationPresented
+    : config.stages.newLead;
 
   // Step 1.5: locked-source pre-flight
   // If commission_locked is true, billing flagged something — making the
