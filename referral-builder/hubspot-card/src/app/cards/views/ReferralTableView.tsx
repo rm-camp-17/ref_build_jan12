@@ -224,6 +224,8 @@ export function ReferralTableView({
   const [copiedFromDealKey, setCopiedFromDealKey] = useState<string | undefined>();
   const [copiedFromYear, setCopiedFromYear] = useState<string | undefined>();
   const [copySource, setCopySource] = useState<string | null>(null);
+  // Which household referral is mid one-click copy (for button feedback).
+  const [copyingRefId, setCopyingRefId] = useState<string | null>(null);
 
   // Confirmation dialog state for "Selected" interest
   const [pendingSelectedConfirm, setPendingSelectedConfirm] = useState(false);
@@ -233,6 +235,19 @@ export function ReferralTableView({
   // ==========================================================================
 
   const dealHasCompany = dealCompanies.length > 0;
+
+  // The exact "Don't send (already sent)" status value for this portal. The
+  // apostrophe is a curly U+2019 in HubSpot, so match the loaded option rather
+  // than hardcoding it; fall back to the canonical string if options failed to
+  // load. Used by the one-click copy so the referral isn't re-sent.
+  const dontSendStatusValue = useMemo(() => {
+    const match = statusOptions.find(
+      (o) =>
+        /don.?t\s*send|already\s*sent/i.test(o.value) ||
+        /don.?t\s*send|already\s*sent/i.test(o.label)
+    );
+    return match?.value ?? "Don’t send (already sent)";
+  }, [statusOptions]);
 
   const canCreate = useMemo(() => {
     return Boolean(
@@ -418,81 +433,139 @@ export function ReferralTableView({
     []
   );
 
-  const createReferral = useCallback(async () => {
-    if (!dealId || !selectedCompanyId) {
-      setError("Deal ID and Company are required");
-      return;
-    }
-    if (submitInProgress.current) return;
-    submitInProgress.current = true;
-    setError(null);
-    setSuccessMessage(null);
+  // Core submit: POST a referral for the CURRENT deal, reset the form, reload.
+  // Shared by the Create button and the one-click household copy.
+  const submitReferral = useCallback(
+    async (params: {
+      companyId: string;
+      note?: string;
+      outreachStatus: string;
+      clientInterest: string;
+      copiedFromDealKey?: string;
+      copiedFromYear?: string;
+    }): Promise<boolean> => {
+      if (!dealId || !params.companyId) {
+        setError("Deal ID and Company are required");
+        return false;
+      }
+      if (submitInProgress.current) return false;
+      submitInProgress.current = true;
+      setError(null);
+      setSuccessMessage(null);
 
-    try {
-      const payload = {
-        dealId,
+      try {
+        const payload = {
+          dealId,
+          companyId: params.companyId,
+          note: params.note || undefined,
+          outreachStatus: params.outreachStatus,
+          clientInterest: params.clientInterest,
+          associateDealToCompany: false,
+          copiedFromDealKey: params.copiedFromDealKey || undefined,
+          copiedFromYear: params.copiedFromYear
+            ? Number(params.copiedFromYear)
+            : undefined,
+        };
+        const data = await apiRequest("/api/referrals", {
+          method: "POST",
+          body: payload,
+        });
+        const dealUpdatedSuffix = data?.dealUpdated
+          ? ". The Session Selection view is now active for tuition entry."
+          : "";
+        const message = data?.created
+          ? `Referral created${dealUpdatedSuffix}`
+          : `Referral updated${dealUpdatedSuffix}`;
+
+        setSuccessMessage(message);
+        actions?.addAlert?.({ type: "success", message });
+
+        setNote("");
+        setSelectedCompanyId("");
+        setSelectedCompanyName("");
+        setCompanyQuery("");
+        setCompanyOptions([]);
+        setSelectedStatus(DEFAULTS.REFERRAL_STATUS);
+        setSelectedInterest(DEFAULTS.CLIENT_INTEREST);
+        setCopiedFromDealKey(undefined);
+        setCopiedFromYear(undefined);
+        setCopySource(null);
+
+        await Promise.all([
+          loadReferrals(),
+          loadDealCompanies(),
+          loadHouseholdReferrals(),
+        ]);
+
+        // The Selected transition advances the stage server-side; ask the
+        // router to re-evaluate which view to render.
+        if (data?.dealUpdated) onStageMaybeChanged();
+        return true;
+      } catch (e: any) {
+        setError(e?.message || "Failed to create referral");
+        return false;
+      } finally {
+        submitInProgress.current = false;
+      }
+    },
+    [
+      dealId,
+      apiRequest,
+      actions,
+      loadReferrals,
+      loadDealCompanies,
+      loadHouseholdReferrals,
+      onStageMaybeChanged,
+    ]
+  );
+
+  // Create from the form (current selections).
+  const createReferral = useCallback(
+    () =>
+      submitReferral({
         companyId: selectedCompanyId,
-        note: note || undefined,
+        note,
         outreachStatus: selectedStatus,
         clientInterest: selectedInterest,
-        associateDealToCompany: false,
-        copiedFromDealKey: copiedFromDealKey || undefined,
-        copiedFromYear: copiedFromYear ? Number(copiedFromYear) : undefined,
-      };
-      const data = await apiRequest("/api/referrals", {
-        method: "POST",
-        body: payload,
-      });
-      const dealUpdatedSuffix = data?.dealUpdated
-        ? ". The Session Selection view is now active for tuition entry."
-        : "";
-      const message = data?.created
-        ? `Referral created${dealUpdatedSuffix}`
-        : `Referral updated${dealUpdatedSuffix}`;
+        copiedFromDealKey,
+        copiedFromYear,
+      }),
+    [
+      submitReferral,
+      selectedCompanyId,
+      note,
+      selectedStatus,
+      selectedInterest,
+      copiedFromDealKey,
+      copiedFromYear,
+    ]
+  );
 
-      setSuccessMessage(message);
-      actions?.addAlert?.({ type: "success", message });
-
-      setNote("");
-      setSelectedCompanyId("");
-      setSelectedCompanyName("");
-      setCompanyQuery("");
-      setCompanyOptions([]);
-      setSelectedStatus(DEFAULTS.REFERRAL_STATUS);
-      setSelectedInterest(DEFAULTS.CLIENT_INTEREST);
-      setCopiedFromDealKey(undefined);
-      setCopiedFromYear(undefined);
-      setCopySource(null);
-
-      await Promise.all([
-        loadReferrals(),
-        loadDealCompanies(),
-        loadHouseholdReferrals(),
-      ]);
-
-      // The Selected transition advances the stage server-side; ask the
-      // router to re-evaluate which view to render.
-      if (data?.dealUpdated) onStageMaybeChanged();
-    } catch (e: any) {
-      setError(e?.message || "Failed to create referral");
-    } finally {
-      submitInProgress.current = false;
-    }
-  }, [
-    dealId,
-    selectedCompanyId,
-    note,
-    selectedStatus,
-    selectedInterest,
-    copiedFromDealKey,
-    copiedFromYear,
-    apiRequest,
-    actions,
-    loadReferrals,
-    loadDealCompanies,
-    loadHouseholdReferrals,
-    onStageMaybeChanged,
-  ]);
+  // One-click copy from household history: copy the referral into THIS deal as
+  // "don't send (already sent)" and create it immediately — no edit step.
+  const handleCopyAndCreate = useCallback(
+    async (sourceReferral: HouseholdReferral, sourceDeal: HouseholdDeal) => {
+      const companyId = sourceReferral.company?.id;
+      if (!companyId) {
+        setError("This referral has no company to copy.");
+        return;
+      }
+      setCopyingRefId(sourceReferral.id);
+      try {
+        await submitReferral({
+          companyId,
+          note: sourceReferral.note || undefined,
+          outreachStatus: dontSendStatusValue,
+          clientInterest: DEFAULTS.CLIENT_INTEREST,
+          copiedFromDealKey: sourceDeal.dealKey,
+          copiedFromYear: sourceDeal.dealYear,
+        });
+      } finally {
+        setCopyingRefId(null);
+      }
+    },
+    [submitReferral, dontSendStatusValue]
+  );
 
   const updateReferral = useCallback(
     async (referralId: string, properties: Record<string, string>) => {
@@ -877,6 +950,9 @@ export function ReferralTableView({
         householdExpanded={householdExpanded}
         onToggleExpanded={() => setHouseholdExpanded(!householdExpanded)}
         onCopyReferral={handleCopyReferral}
+        onCopyAndCreate={handleCopyAndCreate}
+        copyingRefId={copyingRefId}
+        disabled={locked}
       />
 
       <MemoBuilderSection
@@ -1149,7 +1225,12 @@ interface HouseholdHistoryPanelProps {
   householdLoading: boolean;
   householdExpanded: boolean;
   onToggleExpanded: () => void;
+  /** Copy & Edit: load into the form as "ready to send" for manual create. */
   onCopyReferral: (referral: HouseholdReferral, deal: HouseholdDeal) => void;
+  /** One-click Copy: create immediately as "don't send (already sent)". */
+  onCopyAndCreate: (referral: HouseholdReferral, deal: HouseholdDeal) => void;
+  copyingRefId: string | null;
+  disabled?: boolean;
 }
 
 function HouseholdHistoryPanel({
@@ -1158,6 +1239,9 @@ function HouseholdHistoryPanel({
   householdExpanded,
   onToggleExpanded,
   onCopyReferral,
+  onCopyAndCreate,
+  copyingRefId,
+  disabled,
 }: HouseholdHistoryPanelProps) {
   if (!householdData || householdData.householdDeals.length === 0) {
     if (householdLoading) {
@@ -1223,13 +1307,27 @@ function HouseholdHistoryPanel({
                           {ref.clientInterest ? ` · ${ref.clientInterest}` : ""}
                         </Text>
                       </Flex>
-                      <Button
-                        size="small"
-                        variant="secondary"
-                        onClick={() => onCopyReferral(ref, deal)}
-                      >
-                        Copy to This Deal
-                      </Button>
+                      <Flex direction="row" gap="sm" wrap="wrap">
+                        {/* One-click: copies as "don't send (already sent)"
+                            and creates immediately. */}
+                        <Button
+                          size="small"
+                          variant="primary"
+                          disabled={disabled || copyingRefId !== null}
+                          onClick={() => onCopyAndCreate(ref, deal)}
+                        >
+                          {copyingRefId === ref.id ? "Copying…" : "Copy"}
+                        </Button>
+                        {/* Loads the form as "ready to send" to edit + create. */}
+                        <Button
+                          size="small"
+                          variant="secondary"
+                          disabled={disabled || copyingRefId !== null}
+                          onClick={() => onCopyReferral(ref, deal)}
+                        >
+                          {"Copy & Edit"}
+                        </Button>
+                      </Flex>
                     </Flex>
                   ))}
                 </Flex>
