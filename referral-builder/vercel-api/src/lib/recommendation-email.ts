@@ -18,6 +18,7 @@
 
 import { hubspotClient } from './hubspot';
 import { config } from './config';
+import { formatLocation, titleCase } from './us-states';
 
 // ============================================================================
 // Types
@@ -55,23 +56,6 @@ function normalizeUrl(raw: string): string {
   return `https://${v.replace(/^\/+/, '')}`;
 }
 
-/** "https://www.foo.com/x" → "foo.com" for display in the email body. */
-function hostDisplay(url: string): string {
-  return (url || '')
-    .replace(/^https?:\/\//i, '')
-    .replace(/^www\./i, '')
-    .replace(/\/.*$/, '')
-    .trim();
-}
-
-function titleCase(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/\b([a-z])/g, (m) => m.toUpperCase())
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 export async function getEmailCamp(companyId: string): Promise<EmailCamp> {
   try {
     const c: any = await hubspotClient.crm.companies.basicApi.getById(companyId, [
@@ -89,11 +73,7 @@ export async function getEmailCamp(companyId: string): Promise<EmailCamp> {
       (p.short_program_name || '').trim() ||
       titleCase(p.name || '') ||
       `Camp ${companyId}`;
-    const city = (p.city || '').trim();
-    const state = (p.state || '').trim();
-    const location = [city ? titleCase(city) : '', state]
-      .filter(Boolean)
-      .join(', ');
+    const location = formatLocation(p.city ?? '', p.state ?? '');
     return {
       companyId,
       displayName,
@@ -134,15 +114,16 @@ export function composeRecommendationEmail(
   lines.push('');
 
   for (const camp of camps) {
+    // One header line per camp; the full URL stays clickable when pasted into
+    // a mail client (display-domain-only text usually isn't auto-linked).
     const header = [
       camp.displayName,
       camp.location ? `(${camp.location})` : '',
-      camp.website ? `— ${hostDisplay(camp.website)}` : '',
+      camp.website ? `— ${camp.website}` : '',
     ]
       .filter(Boolean)
       .join(' ');
     lines.push(`• ${header}`);
-    if (camp.website) lines.push(`  ${camp.website}`);
     if (camp.summary) lines.push(`  ${camp.summary}`);
     lines.push('');
   }

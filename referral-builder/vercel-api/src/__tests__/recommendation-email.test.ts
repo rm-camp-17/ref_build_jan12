@@ -67,8 +67,10 @@ describe('composeRecommendationEmail', () => {
       expertName: 'Denise Robbins',
     });
     expect(email.subject).toBe('Camp recommendations for summer 2027');
-    expect(email.body).toContain('• Chestnut Lake (Beach Lake, PA) — chestnutlakecamp.com');
-    expect(email.body).toContain('https://www.chestnutlakecamp.com');
+    // One header line per camp, full clickable URL inline (no duplicate line).
+    expect(email.body).toContain(
+      '• Chestnut Lake (Beach Lake, PA) — https://www.chestnutlakecamp.com'
+    );
     expect(email.body).toContain('flexible 3- and 4-week sessions');
     // Camp with no website/summary still gets its bullet.
     expect(email.body).toContain('• Timber Lake West (Roscoe, NY)');
