@@ -95,6 +95,13 @@ export interface DealDetails {
   send_enrollment_email: string | null;
   enrollment_email_sent: string | null;
   enrollment_email_sent_date: string | null;
+  // Expert / split ("sacred") fields — read-only in the card. Optional so
+  // older payloads without them still type-check.
+  expertprofile?: string | null;
+  referred_by?: string | null;
+  split_type?: string | null;
+  deal_split_email?: string | null;
+  deal_split_pct?: string | null;
   parent_contact_count: number;
   associated_child_count: number;
   associated_household_count: number;

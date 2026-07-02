@@ -88,6 +88,8 @@ export function WonView({
 
       <CommissionStructurePanel details={details} />
 
+      <ExpertSplitPanel details={details} />
+
       <Divider />
 
       <EnrollmentEmailPanel
@@ -260,6 +262,65 @@ function CommissionStructurePanel({
             <Text>{c.commission_structure}</Text>
           </Box>
         ))}
+      </Flex>
+    </Box>
+  );
+}
+
+/**
+ * Expert & split visibility — the "sacred" commission-routing fields
+ * (expert profile, referred-by, split type/partner/share). These drive who
+ * gets paid, propagate to clones, and were previously invisible in the card.
+ * Read-only: edits happen in HubSpot's native property UI, where server-side
+ * validation and the sacred-field audit log apply.
+ */
+function ExpertSplitPanel({ details }: { details: DealDetails | null }) {
+  if (!details) return null;
+  const expert = (details.expertprofile || "").trim();
+  const referredBy = (details.referred_by || "").trim();
+  const splitType = (details.split_type || "").trim();
+  const splitEmail = (details.deal_split_email || "").trim();
+  const splitPct = (details.deal_split_pct || "").trim();
+  const hasSplit = Boolean(splitType || splitEmail || splitPct);
+  if (!expert && !referredBy && !hasSplit) return null;
+
+  return (
+    <Box>
+      <Heading level={3}>Expert & split</Heading>
+      <Text variant="microcopy">
+        Commission routing for this deal. Edit these on the deal record itself
+        (changes are validated and audit-logged).
+      </Text>
+      <Flex direction="column" gap="xs">
+        {expert && (
+          <Flex direction="row" gap="md">
+            <Text format={{ fontWeight: "bold" }}>Expert:</Text>
+            <Text>{expert}</Text>
+          </Flex>
+        )}
+        {referredBy && (
+          <Flex direction="row" gap="md">
+            <Text format={{ fontWeight: "bold" }}>Referred by:</Text>
+            <Text>{referredBy}</Text>
+          </Flex>
+        )}
+        {hasSplit && (
+          <Flex direction="row" gap="md" align="center" wrap="wrap">
+            <Text format={{ fontWeight: "bold" }}>Split:</Text>
+            <Tag variant="warning">
+              {[
+                splitType || "Split",
+                splitEmail,
+                splitPct ? `${splitPct}%` : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Tag>
+          </Flex>
+        )}
+        {!hasSplit && (expert || referredBy) && (
+          <Text variant="microcopy">No co-work split on this deal.</Text>
+        )}
       </Flex>
     </Box>
   );
