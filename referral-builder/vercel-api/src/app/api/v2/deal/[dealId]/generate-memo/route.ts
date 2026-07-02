@@ -34,6 +34,7 @@ import { renderMemoDocx, memoFileName } from '@/lib/memo-docx';
 import { deliverMemoToDeal } from '@/lib/hubspot-files';
 import { parseRequestBody } from '@/lib/parse-request-body';
 import { notifyPipelineFailure } from '@/lib/error-notifier';
+import { formatLocation } from '@/lib/us-states';
 import { config } from '@/lib/config';
 import {
   ensureMemoJobsTable,
@@ -69,40 +70,6 @@ async function getOwnerName(ownerId: string | null): Promise<string> {
   } catch {
     return '';
   }
-}
-
-// Full US state names → USPS abbreviation, so a memo header reads "Beach Lake,
-// PA" rather than "BEACH LAKE, Pennsylvania".
-const STATE_ABBR: Record<string, string> = {
-  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA',
-  colorado: 'CO', connecticut: 'CT', delaware: 'DE', florida: 'FL', georgia: 'GA',
-  hawaii: 'HI', idaho: 'ID', illinois: 'IL', indiana: 'IN', iowa: 'IA',
-  kansas: 'KS', kentucky: 'KY', louisiana: 'LA', maine: 'ME', maryland: 'MD',
-  massachusetts: 'MA', michigan: 'MI', minnesota: 'MN', mississippi: 'MS',
-  missouri: 'MO', montana: 'MT', nebraska: 'NE', nevada: 'NV',
-  'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
-  'north carolina': 'NC', 'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK',
-  oregon: 'OR', pennsylvania: 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
-  'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT', vermont: 'VT',
-  virginia: 'VA', washington: 'WA', 'west virginia': 'WV', wisconsin: 'WI',
-  wyoming: 'WY', 'district of columbia': 'DC',
-};
-
-function titleCase(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/\b([a-z])/g, (m) => m.toUpperCase())
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function formatLocation(city: string, state: string): string {
-  const c = city ? titleCase(city) : '';
-  const st = state
-    ? STATE_ABBR[state.trim().toLowerCase()] ||
-      (state.length <= 3 ? state.toUpperCase() : titleCase(state))
-    : '';
-  return [c, st].filter(Boolean).join(', ');
 }
 
 /** Ensure a website string is a usable absolute URL (or '' if unusable). */
