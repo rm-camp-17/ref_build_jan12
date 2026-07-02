@@ -207,6 +207,13 @@ export function ReferralTableView({
   // Select can always render a name even after the search results (and thus
   // companyOptions) are cleared — otherwise the dropdown shows the raw id.
   const [selectedCompanyName, setSelectedCompanyName] = useState("");
+  // Inactive-partner support: search is Active-only by default; this toggle
+  // includes inactive camps so a rep can create the BILLING referral for a
+  // returning camper at an inactive partner (e.g. Wa-Klo). Inactive results
+  // are labeled, and picking one defaults the referral to "don't send".
+  const [includeInactive, setIncludeInactive] = useState(false);
+  const [inactiveIds, setInactiveIds] = useState<Record<string, boolean>>({});
+  const [selectedCompanyInactive, setSelectedCompanyInactive] = useState(false);
 
   // Form fields with defaults
   const [selectedStatus, setSelectedStatus] = useState(DEFAULTS.REFERRAL_STATUS);
@@ -385,14 +392,26 @@ export function ReferralTableView({
       return;
     }
     const data = await apiRequest(
-      `/api/companies/search?q=${encodeURIComponent(companyQuery.trim())}`
+      `/api/companies/search?q=${encodeURIComponent(companyQuery.trim())}${
+        includeInactive ? "&includeInactive=1" : ""
+      }`
     );
-    const opts: Option[] = (data?.results || []).map((c: any) => ({
-      label: c.name || `Company ${c.id}`,
-      value: String(c.id),
-    }));
+    const results: any[] = data?.results || [];
+    const inactive: Record<string, boolean> = {};
+    const opts: Option[] = results.map((c: any) => {
+      const id = String(c.id);
+      const isInactive = Boolean(
+        c.partnerStatus && c.partnerStatus !== "Active"
+      );
+      if (isInactive) inactive[id] = true;
+      return {
+        label: `${c.name || `Company ${id}`}${isInactive ? " (Inactive)" : ""}`,
+        value: id,
+      };
+    });
+    setInactiveIds(inactive);
     setCompanyOptions(opts);
-  }, [companyQuery, apiRequest]);
+  }, [companyQuery, includeInactive, apiRequest]);
 
   const loadHouseholdReferrals = useCallback(async () => {
     if (!dealId) return;
@@ -483,6 +502,7 @@ export function ReferralTableView({
         setNote("");
         setSelectedCompanyId("");
         setSelectedCompanyName("");
+        setSelectedCompanyInactive(false);
         setCompanyQuery("");
         setCompanyOptions([]);
         setSelectedStatus(DEFAULTS.REFERRAL_STATUS);
@@ -746,6 +766,15 @@ export function ReferralTableView({
               readOnly={locked}
             />
 
+            <Checkbox
+              name="includeInactivePartners"
+              checked={includeInactive}
+              onChange={(val: boolean) => setIncludeInactive(Boolean(val))}
+              readOnly={locked}
+            >
+              Include inactive partners (billing only — e.g. a returning camper)
+            </Checkbox>
+
             {searching && <LoadingSpinner label="Searching..." size="small" />}
 
             <Select
@@ -759,6 +788,11 @@ export function ReferralTableView({
                 // showing the name if the search results are later cleared.
                 const picked = companyOptions.find((o) => o.value === val);
                 setSelectedCompanyName(picked?.label ?? "");
+                // Inactive partner → this referral exists for billing (a
+                // returning camper), not outreach: default to "don't send".
+                const isInactive = Boolean(inactiveIds[val]);
+                setSelectedCompanyInactive(isInactive);
+                if (isInactive) setSelectedStatus(dontSendStatusValue);
                 setError(null);
               }}
               required
@@ -773,6 +807,14 @@ export function ReferralTableView({
                   : "Search results will appear here"
               }
             />
+
+            {selectedCompanyInactive && (
+              <Alert title="Inactive partner" variant="warning">
+                This camp isn't taking new referrals. Create this referral for
+                billing (e.g. a returning camper) — status defaults to "don't
+                send" so no outreach goes out.
+              </Alert>
+            )}
 
             <Select
               name="status"
