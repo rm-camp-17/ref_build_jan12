@@ -157,6 +157,13 @@ export async function GET(
       send_enrollment_email: deal.send_enrollment_email,
       enrollment_email_sent: deal.enrollment_email_sent,
       enrollment_email_sent_date: deal.enrollment_email_sent_date,
+      // Expert / split fields — read-only in the card (edits happen in HubSpot
+      // native UI where validation + the sacred-field audit log apply).
+      expertprofile: deal.expertprofile,
+      referred_by: deal.referred_by,
+      split_type: deal.split_type,
+      deal_split_email: deal.deal_split_email,
+      deal_split_pct: deal.deal_split_pct,
     });
   } catch (err: any) {
     console.error(

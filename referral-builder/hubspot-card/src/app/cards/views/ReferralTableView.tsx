@@ -1003,6 +1003,16 @@ function MemoBuilderSection({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<MemoResult | null>(null);
 
+  // Quick email — instant, deterministic (no AI): short program names,
+  // websites, and each camp's four-sentence parent summary. Shown here for
+  // copy/paste and logged as a note on the deal.
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [email, setEmail] = useState<{
+    subject: string;
+    body: string;
+    campsMissingSummary: string[];
+  } | null>(null);
+
   // Memo generation is async — the backend composes with Claude (too slow for a
   // synchronous request through HubSpot's fetch gateway). We POST to start a
   // job, then poll for its result. pollRef holds the interval so we can stop it.
@@ -1122,6 +1132,45 @@ function MemoBuilderSection({
     }
   }, [dealId, selectedIds, instructions, startPolling]);
 
+  // Quick email: synchronous — the backend composes from company records in
+  // about a second (no AI), logs it as a note, and returns the text.
+  const generateEmail = useCallback(async () => {
+    if (selectedIds.length === 0) {
+      setError("Select at least one camp for the email.");
+      return;
+    }
+    setEmailBusy(true);
+    setError(null);
+    setEmail(null);
+    try {
+      const resp = await hubspot.fetch(
+        `${API_BASE}/api/v2/deal/${dealId}/recommendation-email`,
+        {
+          method: "POST",
+          body: JSON.stringify({ companyIds: selectedIds }),
+        }
+      );
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok && data?.success) {
+        setEmail({
+          subject: data.subject || "",
+          body: data.body || "",
+          campsMissingSummary: data.campsMissingSummary || [],
+        });
+        actions?.addAlert?.({
+          type: "success",
+          message: "Email drafted and logged as a note on this deal.",
+        });
+      } else {
+        setError(data?.message || "Failed to compose the email.");
+      }
+    } catch (e: any) {
+      setError(e?.message || "Failed to compose the email.");
+    } finally {
+      setEmailBusy(false);
+    }
+  }, [dealId, selectedIds, actions]);
+
   return (
     <Box>
       <Divider />
@@ -1201,7 +1250,32 @@ function MemoBuilderSection({
             />
           )}
 
-          <Flex direction="row" gap="sm">
+          {email && (
+            <Alert title="Email drafted" variant="success">
+              <Flex direction="column" gap="sm">
+                <Text variant="microcopy">
+                  Copy the text below into your email (it's also saved as a
+                  note on this deal). Replace the [bracketed] placeholders,
+                  and attach the memo if you've generated one.
+                </Text>
+                <Text format={{ fontWeight: "bold" }}>
+                  Subject: {email.subject}
+                </Text>
+                {email.body.split("\n").map((line, i) => (
+                  <Text key={i}>{line || " "}</Text>
+                ))}
+                {email.campsMissingSummary.length > 0 && (
+                  <Text variant="microcopy">
+                    No parent summary on file for:{" "}
+                    {email.campsMissingSummary.join(", ")} — add a sentence or
+                    two for these before sending.
+                  </Text>
+                )}
+              </Flex>
+            </Alert>
+          )}
+
+          <Flex direction="row" gap="sm" wrap="wrap">
             <Button
               variant="primary"
               disabled={locked || busy || selectedIds.length === 0}
@@ -1209,7 +1283,19 @@ function MemoBuilderSection({
             >
               {busy ? "Generating…" : "Generate Memo"}
             </Button>
+            <Button
+              variant="secondary"
+              disabled={locked || emailBusy || selectedIds.length === 0}
+              onClick={generateEmail}
+            >
+              {emailBusy ? "Drafting…" : "Quick Email"}
+            </Button>
           </Flex>
+          <Text variant="microcopy">
+            Quick Email drafts a short note with each camp's website and
+            parent summary — instant, ready to paste. Generate Memo builds
+            the full recommendation document.
+          </Text>
         </Flex>
       )}
     </Box>

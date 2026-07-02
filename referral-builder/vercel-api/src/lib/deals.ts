@@ -86,6 +86,14 @@ const SESSION_CARD_PROPERTIES: ReadonlyArray<string> = [
   'send_enrollment_email',
   'enrollment_email_sent',
   'enrollment_email_sent_date',
+  // Expert / split ("sacred") fields — read-only in the card, surfaced so
+  // split-referral deals are visible to the expert (edits stay in HubSpot
+  // native UI where validation + audit-log apply).
+  'expertprofile',
+  'referred_by',
+  'split_type',
+  'deal_split_email',
+  'deal_split_pct',
 ];
 
 // ============================================================================
@@ -135,6 +143,12 @@ export interface DealRecord {
   send_enrollment_email: string | null;
   enrollment_email_sent: string | null;
   enrollment_email_sent_date: string | null;
+  // Expert / split ("sacred") fields — read-only from the card
+  expertprofile: string | null;
+  referred_by: string | null;
+  split_type: string | null;
+  deal_split_email: string | null;
+  deal_split_pct: string | null;
 }
 
 // ============================================================================
@@ -187,6 +201,11 @@ export async function getDeal(dealId: string): Promise<DealRecord | null> {
       send_enrollment_email: p.send_enrollment_email ?? null,
       enrollment_email_sent: p.enrollment_email_sent ?? null,
       enrollment_email_sent_date: p.enrollment_email_sent_date ?? null,
+      expertprofile: p.expertprofile ?? null,
+      referred_by: p.referred_by ?? null,
+      split_type: p.split_type ?? null,
+      deal_split_email: p.deal_split_email ?? null,
+      deal_split_pct: p.deal_split_pct ?? null,
     };
   } catch (err: any) {
     if (err?.code === 404 || err?.statusCode === 404) {
