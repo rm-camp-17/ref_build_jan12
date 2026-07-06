@@ -199,7 +199,7 @@ describe('createFamilyDeal', () => {
     expect(assocCalls).toHaveLength(4);
   });
 
-  test('refuses a duplicate year for the same child', async () => {
+  test('asks for confirmation when the kid already has deals that year (no hard block)', async () => {
     wireAssociations({
       [`${CHILD}:10:deals`]: ['1'],
       [`${CHILD}:10:${HH}`]: ['77'],
@@ -215,8 +215,34 @@ describe('createFamilyDeal', () => {
       expertProfile: 'karen_meister',
     });
     expect(result.success).toBe(false);
-    expect((result as any).duplicate).toBe(true);
-    expect((result as any).existingDealName).toBe('Archie Conway | 2027');
+    expect((result as any).requiresConfirmation).toBe(true);
+    expect((result as any).existingDeals).toEqual([
+      { dealId: '1', dealName: 'Archie Conway | 2027' },
+    ]);
     expect(mockCreateDeal).not.toHaveBeenCalled();
+  });
+
+  test('confirmDuplicate creates a second same-year deal (two programs in one summer)', async () => {
+    wireAssociations({
+      [`${CHILD}:10:deals`]: ['1'],
+      [`${CHILD}:10:${HH}`]: ['77'],
+      [`${HH}:77:contacts`]: ['5'],
+      [`${CHILD}:10:contacts`]: [],
+    });
+    wireObjects({
+      [`${CHILD}:10`]: { child_name: 'Archie Conway' },
+      'deals:1': { dealname: 'Archie Conway | 2027', year1: '2027' },
+    });
+
+    const result = await createFamilyDeal({
+      childId: '10',
+      year: 2027,
+      expertProfile: 'karen_meister',
+      confirmDuplicate: true,
+    });
+    expect(result.success).toBe(true);
+    expect(mockCreateDeal).toHaveBeenCalledTimes(1);
+    const props = mockCreateDeal.mock.calls[0][0].properties;
+    expect(props.dealname).toBe('Archie Conway | 2027');
   });
 });

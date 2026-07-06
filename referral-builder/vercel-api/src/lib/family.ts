@@ -282,12 +282,23 @@ export interface CreateFamilyDealInput {
   householdId?: string | null;
   /** Optional HubSpot owner to assign. */
   ownerId?: string | null;
+  /**
+   * A kid CAN have multiple deals in one year (e.g. two programs in one
+   * summer). When the kid already has deals for the target year we return
+   * requiresConfirmation instead of creating; passing true creates anyway.
+   */
+  confirmDuplicate?: boolean;
 }
 
 export type CreateFamilyDealResult =
   | { success: true; dealId: string; dealName: string; dealUrl: string }
-  | { success: false; duplicate: true; existingDealId: string; existingDealName: string; message: string }
-  | { success: false; duplicate?: false; message: string };
+  | {
+      success: false;
+      requiresConfirmation: true;
+      existingDeals: Array<{ dealId: string; dealName: string }>;
+      message: string;
+    }
+  | { success: false; requiresConfirmation?: false; message: string };
 
 export async function createFamilyDeal(
   input: CreateFamilyDealInput
@@ -301,27 +312,37 @@ export async function createFamilyDeal(
     return { success: false, message: 'Child record not found.' };
   }
 
-  // Dedup: the child's live deals for the same year (works across legacy
-  // deals whose FK properties aren't object ids).
-  const existingDealIds = await getAssociatedIds(CHILD, childId, 'deals').catch(
-    () => []
-  );
-  for (const id of existingDealIds) {
-    try {
-      const d = await getObject('deals', id, ['dealname', 'year1']);
-      if ((d.properties.year1 || '') === String(year)) {
-        return {
-          success: false,
-          duplicate: true,
-          existingDealId: id,
-          existingDealName: d.properties.dealname || `Deal ${id}`,
-          message: `${childName} already has a ${year} deal: "${
-            d.properties.dealname || id
-          }".`,
-        };
+  // Gentle same-year guide (NOT a hard block — a kid can attend two programs
+  // in one year). Unless the caller confirmed, surface the kid's existing
+  // deals for the target year and ask before creating another. Checked via
+  // live associations so legacy deals count.
+  if (!input.confirmDuplicate) {
+    const existingDealIds = await getAssociatedIds(CHILD, childId, 'deals').catch(
+      () => []
+    );
+    const sameYear: Array<{ dealId: string; dealName: string }> = [];
+    for (const id of existingDealIds) {
+      try {
+        const d = await getObject('deals', id, ['dealname', 'year1']);
+        if ((d.properties.year1 || '') === String(year)) {
+          sameYear.push({
+            dealId: id,
+            dealName: d.properties.dealname || `Deal ${id}`,
+          });
+        }
+      } catch {
+        // unreadable deal — don't block creation on it
       }
-    } catch {
-      // unreadable deal — don't block creation on it
+    }
+    if (sameYear.length > 0) {
+      return {
+        success: false,
+        requiresConfirmation: true,
+        existingDeals: sameYear,
+        message: `${childName} already has ${sameYear.length} ${year} deal${
+          sameYear.length === 1 ? '' : 's'
+        }: ${sameYear.map((d) => `"${d.dealName}"`).join(', ')}. Create another (e.g. a second program)?`,
+      };
     }
   }
 
