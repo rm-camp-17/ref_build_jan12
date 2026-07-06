@@ -6,6 +6,6 @@
     "description": "Every kid's deals by year, kid, or camp, plus one-click Add Deal with automatic associations.",
     "location": "crm.record.sidebar",
     "entrypoint": "/app/cards/FamilyCard.tsx",
-    "objectTypes": ["p50530609_household"]
+    "objectTypes": ["p_household"]
   }
 }
