@@ -6,6 +6,6 @@
     "description": "This kid's open deals, camps attended, and one-click Add Deal with automatic associations.",
     "location": "crm.record.sidebar",
     "entrypoint": "/app/cards/FamilyCard.tsx",
-    "objectTypes": ["p50530609_child"]
+    "objectTypes": ["p_child"]
   }
 }
