@@ -33,6 +33,8 @@ export const maxDuration = 30;
 
 interface Body {
   companyIds?: string[];
+  /** When true, compose without logging a note (used by the camp-list view). */
+  skipNote?: boolean;
 }
 
 async function getOwnerName(ownerId: string | null): Promise<string> {
@@ -110,13 +112,21 @@ export async function POST(
     });
 
     // Paper trail — best-effort; the compose still succeeds if this fails.
-    const noteId = await logEmailToDeal(dealId, email);
+    const noteId = body.skipNote ? null : await logEmailToDeal(dealId, email);
 
     return NextResponse.json({
       success: true,
       subject: email.subject,
       body: email.body,
       campsMissingSummary: email.campsMissingSummary,
+      // Structured per-camp data so the card can render a clickable list
+      // (short name + website) without re-fetching.
+      camps: camps.map((c) => ({
+        companyId: c.companyId,
+        displayName: c.displayName,
+        location: c.location,
+        website: c.website,
+      })),
       noteId,
     });
   } catch (err: any) {
