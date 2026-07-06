@@ -413,7 +413,7 @@ function AddDealSection({
   const [expert, setExpert] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [duplicate, setDuplicate] = useState<string | null>(null);
+  const [needsConfirm, setNeedsConfirm] = useState<string | null>(null);
   const [created, setCreated] = useState<{ dealName: string; dealUrl: string } | null>(
     null
   );
@@ -421,43 +421,57 @@ function AddDealSection({
   const kidName = overview.kids.find((k) => k.id === kidId)?.name || "";
   const ready = Boolean(kidId && year && expert);
 
-  const create = useCallback(async () => {
-    if (!ready) return;
-    setBusy(true);
-    setError(null);
-    setDuplicate(null);
-    setCreated(null);
-    try {
-      const resp = await hubspot.fetch(`${API_BASE}/api/v2/family/create-deal`, {
-        method: "POST",
-        body: JSON.stringify({
-          childId: kidId,
-          year: parseInt(year, 10),
-          expertProfile: expert,
-          householdId: overview.householdId || undefined,
-        }),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (resp.status === 409 && data?.duplicate) {
-        setDuplicate(data.message || "This kid already has a deal for that year.");
-        return;
-      }
-      if (resp.ok && data?.success) {
-        setCreated({ dealName: data.dealName, dealUrl: data.dealUrl });
-        actions?.addAlert?.({
-          type: "success",
-          message: `Created ${data.dealName} with all associations.`,
+  // Gentle guide (not a block): what this kid already has for the target year
+  // — a family can run two programs in one summer, so a second deal is fine.
+  const sameYearDeals = useMemo(
+    () =>
+      overview.deals.filter((d) => d.childId === kidId && d.year === year.trim()),
+    [overview.deals, kidId, year]
+  );
+
+  const create = useCallback(
+    async (confirmDuplicate: boolean) => {
+      if (!ready) return;
+      setBusy(true);
+      setError(null);
+      setCreated(null);
+      try {
+        const resp = await hubspot.fetch(`${API_BASE}/api/v2/family/create-deal`, {
+          method: "POST",
+          body: JSON.stringify({
+            childId: kidId,
+            year: parseInt(year, 10),
+            expertProfile: expert,
+            householdId: overview.householdId || undefined,
+            confirmDuplicate,
+          }),
         });
-        onCreated();
-      } else {
-        setError(data?.message || "Failed to create the deal.");
+        const data = await resp.json().catch(() => ({}));
+        if (resp.status === 409 && data?.requiresConfirmation) {
+          setNeedsConfirm(
+            data.message || "This kid already has a deal for that year."
+          );
+          return;
+        }
+        if (resp.ok && data?.success) {
+          setNeedsConfirm(null);
+          setCreated({ dealName: data.dealName, dealUrl: data.dealUrl });
+          actions?.addAlert?.({
+            type: "success",
+            message: `Created ${data.dealName} with all associations.`,
+          });
+          onCreated();
+        } else {
+          setError(data?.message || "Failed to create the deal.");
+        }
+      } catch (e: any) {
+        setError(e?.message || "Failed to create the deal.");
+      } finally {
+        setBusy(false);
       }
-    } catch (e: any) {
-      setError(e?.message || "Failed to create the deal.");
-    } finally {
-      setBusy(false);
-    }
-  }, [ready, kidId, year, expert, overview.householdId, onCreated, actions]);
+    },
+    [ready, kidId, year, expert, overview.householdId, onCreated, actions]
+  );
 
   return (
     <Flex direction="column" gap="sm">
@@ -468,16 +482,31 @@ function AddDealSection({
       </Text>
 
       {error && <Alert variant="error">{error}</Alert>}
-      {duplicate && (
-        <Alert title="Already exists" variant="warning">
-          {duplicate}
-        </Alert>
-      )}
       {created && (
         <Alert title="Deal created" variant="success">
           <Flex direction="column" gap="xs">
             <Text>{created.dealName}</Text>
             <Link href={created.dealUrl}>Open the new deal</Link>
+          </Flex>
+        </Alert>
+      )}
+
+      {/* Gentle heads-up, not a block — two programs in one year is valid. */}
+      {!needsConfirm && sameYearDeals.length > 0 && (
+        <Alert title={`${kidName || "This kid"} already has ${year} deal${
+          sameYearDeals.length === 1 ? "" : "s"
+        }`} variant="info">
+          <Flex direction="column" gap="xs">
+            {sameYearDeals.map((d) => (
+              <Flex key={d.dealId} direction="row" gap="sm" wrap="wrap">
+                <Tag variant="default">{d.statusLabel}</Tag>
+                <Text variant="microcopy">{d.dealName}</Text>
+              </Flex>
+            ))}
+            <Text variant="microcopy">
+              You can still add another — e.g. a second program in the same
+              summer.
+            </Text>
           </Flex>
         </Alert>
       )}
@@ -516,13 +545,41 @@ function AddDealSection({
         description={expertOptions.length === 0 ? "Loading expert list…" : undefined}
       />
 
-      <Button variant="primary" disabled={!ready || busy} onClick={create}>
-        {busy
-          ? "Creating…"
-          : ready
-          ? `Create "${kidName} | ${year}"`
-          : "Pick a kid, year, and expert"}
-      </Button>
+      {needsConfirm ? (
+        <Flex direction="column" gap="sm">
+          <Alert title="Existing deals this year" variant="warning">
+            {needsConfirm}
+          </Alert>
+          <Flex direction="row" gap="sm" wrap="wrap">
+            <Button
+              variant="primary"
+              disabled={busy}
+              onClick={() => create(true)}
+            >
+              {busy ? "Creating…" : "Create anyway (second program)"}
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => setNeedsConfirm(null)}
+            >
+              Cancel
+            </Button>
+          </Flex>
+        </Flex>
+      ) : (
+        <Button
+          variant="primary"
+          disabled={!ready || busy}
+          onClick={() => create(false)}
+        >
+          {busy
+            ? "Creating…"
+            : ready
+            ? `Create "${kidName} | ${year}"`
+            : "Pick a kid, year, and expert"}
+        </Button>
+      )}
     </Flex>
   );
 }

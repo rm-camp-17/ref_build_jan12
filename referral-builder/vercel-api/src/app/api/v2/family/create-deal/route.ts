@@ -5,19 +5,22 @@
  * Parent records).
  *
  *   Body: {
- *     childId: string        // HubSpot child object id (required)
- *     year: number           // e.g. 2027 (required)
- *     expertProfile: string  // deal expertprofile enum value (required)
- *     householdId?: string   // resolved from the child when omitted
- *     ownerId?: string       // optional HubSpot owner
+ *     childId: string           // HubSpot child object id (required)
+ *     year: number              // e.g. 2027 (required)
+ *     expertProfile: string     // deal expertprofile enum value (required)
+ *     householdId?: string      // resolved from the child when omitted
+ *     ownerId?: string          // optional HubSpot owner
+ *     confirmDuplicate?: boolean // create even though same-year deals exist
  *   }
  *
  * Creates the deal with the standard field set (dealname "{Child} | {Year}",
  * pipeline default, New Lead, year1, deal_key, FK properties, expertprofile)
  * and the required associations (child, household, parent contacts).
  *
- * 409 with { duplicate: true, existingDealName } when the child already has a
- * deal for that year.
+ * When the child already has deals for that year and confirmDuplicate isn't
+ * set, responds 409 with { requiresConfirmation: true, existingDeals } — a
+ * gentle guide, not a block: a kid can attend two programs in one year, so
+ * the card re-submits with confirmDuplicate: true after the rep confirms.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -36,6 +39,7 @@ export async function POST(req: NextRequest) {
     expertProfile?: unknown;
     householdId?: unknown;
     ownerId?: unknown;
+    confirmDuplicate?: unknown;
   };
   try {
     body = parseRequestBody(rawBody) as typeof body;
@@ -84,10 +88,11 @@ export async function POST(req: NextRequest) {
         typeof body.ownerId === 'string' && body.ownerId.trim()
           ? body.ownerId.trim()
           : null,
+      confirmDuplicate: body.confirmDuplicate === true,
     });
 
     if (result.success) return NextResponse.json(result);
-    if ('duplicate' in result && result.duplicate) {
+    if ('requiresConfirmation' in result && result.requiresConfirmation) {
       return NextResponse.json(result, { status: 409 });
     }
     return NextResponse.json(result, { status: 400 });
