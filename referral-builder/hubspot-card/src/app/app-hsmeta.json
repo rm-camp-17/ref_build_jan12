@@ -11,6 +11,7 @@
         "crm.objects.deals.read",
         "crm.objects.deals.write",
         "crm.objects.companies.read",
+        "crm.objects.contacts.read",
         "crm.objects.custom.read",
         "crm.objects.custom.write",
         "files"

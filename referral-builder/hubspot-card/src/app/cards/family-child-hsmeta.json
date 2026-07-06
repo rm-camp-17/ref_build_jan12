@@ -1,0 +1,11 @@
+{
+  "uid": "camp_family_card_child",
+  "type": "card",
+  "config": {
+    "name": "Camp Experts — Family Deals (Child)",
+    "description": "This kid's open deals, camps attended, and one-click Add Deal with automatic associations.",
+    "location": "crm.record.sidebar",
+    "entrypoint": "/app/cards/FamilyCard.tsx",
+    "objectTypes": ["2-50911061"]
+  }
+}

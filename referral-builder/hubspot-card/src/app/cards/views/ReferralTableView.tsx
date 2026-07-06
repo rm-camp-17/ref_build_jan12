@@ -1054,6 +1054,14 @@ function MemoBuilderSection({
     body: string;
     campsMissingSummary: string[];
   } | null>(null);
+  // Camp List — the simplest output: short program name + clickable website.
+  const [listBusy, setListBusy] = useState(false);
+  const [campList, setCampList] = useState<Array<{
+    companyId: string;
+    displayName: string;
+    location: string;
+    website: string;
+  }> | null>(null);
 
   // Memo generation is async — the backend composes with Claude (too slow for a
   // synchronous request through HubSpot's fetch gateway). We POST to start a
@@ -1213,6 +1221,37 @@ function MemoBuilderSection({
     }
   }, [dealId, selectedIds, actions]);
 
+  // Camp List: the simplest output — short name + clickable website per camp.
+  // Same endpoint as Quick Email, but no note is logged.
+  const generateCampList = useCallback(async () => {
+    if (selectedIds.length === 0) {
+      setError("Select at least one camp.");
+      return;
+    }
+    setListBusy(true);
+    setError(null);
+    setCampList(null);
+    try {
+      const resp = await hubspot.fetch(
+        `${API_BASE}/api/v2/deal/${dealId}/recommendation-email`,
+        {
+          method: "POST",
+          body: JSON.stringify({ companyIds: selectedIds, skipNote: true }),
+        }
+      );
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok && data?.success && Array.isArray(data.camps)) {
+        setCampList(data.camps);
+      } else {
+        setError(data?.message || "Failed to build the camp list.");
+      }
+    } catch (e: any) {
+      setError(e?.message || "Failed to build the camp list.");
+    } finally {
+      setListBusy(false);
+    }
+  }, [dealId, selectedIds]);
+
   return (
     <Box>
       <Divider />
@@ -1317,6 +1356,26 @@ function MemoBuilderSection({
             </Alert>
           )}
 
+          {campList && (
+            <Alert title="Camp list" variant="info">
+              <Flex direction="column" gap="xs">
+                {campList.map((c) => (
+                  <Flex key={c.companyId} direction="row" gap="sm" wrap="wrap">
+                    <Text format={{ fontWeight: "bold" }}>{c.displayName}</Text>
+                    {c.location && <Text variant="microcopy">{c.location}</Text>}
+                    {c.website ? (
+                      <Link href={c.website} external>
+                        {c.website.replace(/^https?:\/\//i, "").replace(/^www\./i, "")}
+                      </Link>
+                    ) : (
+                      <Text variant="microcopy">no website on file</Text>
+                    )}
+                  </Flex>
+                ))}
+              </Flex>
+            </Alert>
+          )}
+
           <Flex direction="row" gap="sm" wrap="wrap">
             <Button
               variant="primary"
@@ -1332,11 +1391,18 @@ function MemoBuilderSection({
             >
               {emailBusy ? "Drafting…" : "Quick Email"}
             </Button>
+            <Button
+              variant="secondary"
+              disabled={locked || listBusy || selectedIds.length === 0}
+              onClick={generateCampList}
+            >
+              {listBusy ? "Loading…" : "Camp List"}
+            </Button>
           </Flex>
           <Text variant="microcopy">
-            Quick Email drafts a short note with each camp's website and
-            parent summary — instant, ready to paste. Generate Memo builds
-            the full recommendation document.
+            Camp List shows just names + clickable websites. Quick Email
+            drafts a short note with each camp's parent summary. Generate
+            Memo builds the full recommendation document.
           </Text>
         </Flex>
       )}
