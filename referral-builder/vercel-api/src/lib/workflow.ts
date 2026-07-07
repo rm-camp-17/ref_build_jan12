@@ -981,14 +981,23 @@ function buildAssociationSpecs(
     category: 'USER_DEFINED',
   });
 
-  // Always: Deal ↔ Company (default unlabeled HubSpot association)
-  // Every referral should link its deal to its company. Idempotent.
-  specs.push({
-    fromId: input.dealId,
-    fromType: 'deals',
-    toId: input.companyId,
-    toType: 'companies',
-  });
+  // Conditionally: Deal ↔ Company (default unlabeled HubSpot association).
+  //
+  // This used to be unconditional ("every referral links its deal to its
+  // company"), which put the child's ENTIRE recommended-camp set on the deal
+  // — and the enrollment mailer resolves its recipient from the deal's
+  // company, so emails went to the wrong camp (e.g. deal 61750196319,
+  // "SUMMER DISCOVERY", mailed ACA). Referral→company (typeId 139 above) is
+  // the correct home for recommendations; the deal gets its ONE company when
+  // a program is Selected (deal-updater) or when the caller explicitly asks.
+  if (input.associateDealToCompany === true) {
+    specs.push({
+      fromId: input.dealId,
+      fromType: 'deals',
+      toId: input.companyId,
+      toType: 'companies',
+    });
+  }
 
   return specs;
 }
