@@ -33,6 +33,12 @@ import { config } from './config';
 import { fetchReferralsForDeal } from './referrals';
 import { dualWriteReferralProperty } from './property-aliases';
 import { stripProgramFromDealName } from './deals';
+import {
+  getDealCompanies,
+  pickCompanyForProgram,
+  scoreCompanyMatch,
+  CONFIDENT_SCORE,
+} from './deal-company-guard';
 
 // ============================================================================
 // Types
@@ -320,7 +326,8 @@ function buildClonePayload(
 
 async function copyAssociationsBestEffort(
   sourceDealId: string,
-  newDealId: string
+  newDealId: string,
+  sourceProgramname: string
 ): Promise<void> {
   // Each pair runs independently and swallows its own errors —
   // associations are nice-to-have, the deal already exists with the
@@ -328,7 +335,6 @@ async function copyAssociationsBestEffort(
   const pairs: ReadonlyArray<[string, string]> = [
     [config.objectTypes.child, 'children'],
     [config.objectTypes.household, 'households'],
-    ['companies', 'companies'],
     ['contacts', 'contacts'],
   ];
 
@@ -356,6 +362,34 @@ async function copyAssociationsBestEffort(
         err.message
       );
     }
+  }
+
+  // Companies are NOT copied wholesale. The enrollment mailer resolves its
+  // recipient from the deal's company, and polluted source deals used to
+  // pass their whole recommended-camp set to the clone (deal 61750196319).
+  // Copy at most the ONE company matching the source's programname; the
+  // recommended camps travel on the copied referrals instead.
+  try {
+    const sourceCompanies = await getDealCompanies(sourceDealId);
+    if (sourceCompanies.length === 0) return;
+    const keep = pickCompanyForProgram(sourceProgramname, sourceCompanies);
+    if (!keep || scoreCompanyMatch(sourceProgramname, keep.name) < CONFIDENT_SCORE) {
+      console.log(
+        `[clone] not copying companies to deal ${newDealId}: no confident programname match among ${sourceCompanies.length} source companies`
+      );
+      return;
+    }
+    await hubspotClient.crm.associations.v4.basicApi.createDefault(
+      'deals',
+      newDealId,
+      'companies',
+      keep.id
+    );
+  } catch (err: any) {
+    console.warn(
+      `[clone] company copy skipped for new deal ${newDealId}:`,
+      err.message
+    );
   }
 }
 
@@ -700,7 +734,7 @@ export async function cloneForYear(input: CloneInput): Promise<CloneResult> {
   // while each stays internally sequential to respect HubSpot rate limits.
   if (result.success) {
     await Promise.allSettled([
-      copyAssociationsBestEffort(sourceDealId, result.newDealId),
+      copyAssociationsBestEffort(sourceDealId, result.newDealId, source.programname ?? ''),
       copyReferralsToClone(sourceDealId, result.newDealId, source, targetYear),
       shareActivityToClone(sourceDealId, result.newDealId),
     ]);

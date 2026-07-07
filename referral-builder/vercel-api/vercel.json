@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/v2/admin/company-audit?notify=1",
+      "schedule": "0 13 * * *"
+    }
+  ]
+}

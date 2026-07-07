@@ -12,7 +12,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { updateDeal } from '@/lib/deals';
+import { getDeal, updateDeal } from '@/lib/deals';
+import { enrollmentSendGate } from '@/lib/deal-company-guard';
 import { config } from '@/lib/config';
 import {
   requireUnlocked,
@@ -52,6 +53,59 @@ export async function POST(
       return NextResponse.json(err.body, { status: err.statusCode });
     }
     throw err;
+  }
+
+  // Safeguard A — pre-send validation gate. The HubSpot-side mailer resolves
+  // its recipient from the deal's associated company, so we refuse to queue
+  // unless the deal has exactly one company and it matches the selected
+  // program. A multi-company deal with one confident match is auto-reduced;
+  // zero companies / no match blocks with a clear reason (never guess).
+  try {
+    const deal = await getDeal(dealId);
+    if (!deal) {
+      return NextResponse.json(
+        { success: false, message: 'Deal not found.' },
+        { status: 404 }
+      );
+    }
+    const gate = await enrollmentSendGate(dealId, deal.programname ?? '');
+    if (!gate.allowed) {
+      console.warn(
+        `[v2/send-enrollment-email] BLOCKED deal ${dealId} (${gate.status}): program="${deal.programname}" companies=${gate.companies
+          .map((c) => `${c.id}:"${c.name}"`)
+          .join(', ')}`
+      );
+      await notifyPipelineFailure({
+        action: 'enrollment-email-blocked',
+        dealId,
+        error: gate.message,
+        detail: `status=${gate.status} program="${deal.programname}" companies=[${gate.companies
+          .map((c) => c.name || c.id)
+          .join('; ')}]`,
+      }).catch(() => {});
+      return NextResponse.json(
+        { success: false, blocked: true, message: gate.message },
+        { status: 409 }
+      );
+    }
+    if (gate.autoFixed) {
+      console.log(
+        `[v2/send-enrollment-email] deal ${dealId} auto-reconciled before send: ${gate.message}`
+      );
+    }
+  } catch (err: any) {
+    // The gate itself failing must not silently allow a wrong-camp send.
+    console.error(
+      `[v2/send-enrollment-email] gate error for deal ${dealId}:`,
+      err?.message
+    );
+    return NextResponse.json(
+      {
+        success: false,
+        message: 'Could not verify the camp link for this deal. Please try again.',
+      },
+      { status: 500 }
+    );
   }
 
   try {
