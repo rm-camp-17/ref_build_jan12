@@ -20,6 +20,7 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Divider,
   Flex,
   Heading,
@@ -98,6 +99,41 @@ function typeFromContext(objectTypeId: string | undefined): Overview["objectType
   if (objectTypeId === "2-53610744") return "household";
   if (objectTypeId === "2-50911061") return "child";
   return null;
+}
+
+/**
+ * Expert-profile filtering: each expert should only be offered THEIR
+ * profiles (Karen Meister → "Karen Meister", "Karen Meister EXPO",
+ * "Karen Meister SPECIAL"…). Matching is name-based against the logged-in
+ * HubSpot user:
+ *   - the label contains the user's full name (normalized), OR
+ *   - the label is a combo profile ("CarrieAndFiona", "Amanda/Eliza",
+ *     "EmilyAndBeth") that contains the user's first name.
+ * Fails open: when nothing matches (assistants, admins, name mismatches) the
+ * full list is shown, and a "Show all profiles" toggle is always available.
+ */
+function normalize(s: string): string {
+  return (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function filterExpertOptionsForUser(
+  options: Option[],
+  firstName: string,
+  lastName: string
+): Option[] {
+  const nf = normalize(firstName);
+  const nl = normalize(lastName);
+  if (!nf) return options;
+  const mine = options.filter((o) => {
+    const label = o.label || "";
+    const n = normalize(label);
+    if (nl && n.includes(nf + nl)) return true; // "Karen Meister EXPO"
+    if (nl && n.includes(nf) && n.includes(nl)) return true; // reordered
+    // Combo profiles list first names joined by And / & / slash.
+    if (n.includes(nf) && /(and|&|\/)/i.test(label)) return true;
+    return false;
+  });
+  return mine.length > 0 ? mine : options;
 }
 
 const LOST_LABELS: Record<string, string> = {
@@ -190,6 +226,7 @@ function FamilyCard({ context, actions }: { context: any; actions?: any }) {
     <FamilyOverviewView
       overview={overview}
       expertOptions={expertOptions}
+      user={context?.user || null}
       onChanged={load}
       actions={actions}
     />
@@ -203,11 +240,13 @@ function FamilyCard({ context, actions }: { context: any; actions?: any }) {
 function FamilyOverviewView({
   overview,
   expertOptions,
+  user,
   onChanged,
   actions,
 }: {
   overview: Overview;
   expertOptions: Option[];
+  user: { firstName?: string; lastName?: string } | null;
   onChanged: () => void;
   actions?: any;
 }) {
@@ -323,6 +362,7 @@ function FamilyOverviewView({
       <AddDealSection
         overview={overview}
         expertOptions={expertOptions}
+        user={user}
         onCreated={onChanged}
         actions={actions}
       />
@@ -395,11 +435,13 @@ function GroupedWonList({
 function AddDealSection({
   overview,
   expertOptions,
+  user,
   onCreated,
   actions,
 }: {
   overview: Overview;
   expertOptions: Option[];
+  user: { firstName?: string; lastName?: string } | null;
   onCreated: () => void;
   actions?: any;
 }) {
@@ -414,6 +456,20 @@ function AddDealSection({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsConfirm, setNeedsConfirm] = useState<string | null>(null);
+  // Experts only see THEIR profiles by default (matched on the logged-in
+  // user's name); the toggle reveals the full list for admins/assistants.
+  const [showAllProfiles, setShowAllProfiles] = useState(false);
+  const myOptions = useMemo(
+    () =>
+      filterExpertOptionsForUser(
+        expertOptions,
+        user?.firstName || "",
+        user?.lastName || ""
+      ),
+    [expertOptions, user]
+  );
+  const isFiltered = myOptions.length < expertOptions.length;
+  const visibleExpertOptions = showAllProfiles ? expertOptions : myOptions;
   const [created, setCreated] = useState<{ dealName: string; dealUrl: string } | null>(
     null
   );
@@ -538,12 +594,28 @@ function AddDealSection({
       <Select
         name="addDealExpert"
         label="Expert profile"
-        options={expertOptions}
+        options={visibleExpertOptions}
         value={expert}
         onChange={(v) => setExpert(v as string)}
         required
-        description={expertOptions.length === 0 ? "Loading expert list…" : undefined}
+        description={
+          expertOptions.length === 0
+            ? "Loading expert list…"
+            : !showAllProfiles && isFiltered
+            ? `Showing your profiles (${myOptions.length} of ${expertOptions.length})`
+            : undefined
+        }
       />
+
+      {isFiltered && (
+        <Checkbox
+          name="showAllProfiles"
+          checked={showAllProfiles}
+          onChange={(v: boolean) => setShowAllProfiles(Boolean(v))}
+        >
+          Show all expert profiles
+        </Checkbox>
+      )}
 
       {needsConfirm ? (
         <Flex direction="column" gap="sm">
