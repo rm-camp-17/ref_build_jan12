@@ -23,7 +23,6 @@ import {
   Checkbox,
   Divider,
   Flex,
-  Heading,
   Input,
   Link,
   LoadingSpinner,
@@ -267,9 +266,9 @@ function FamilyOverviewView({
   const lost = deals.filter((d) => d.category === "lost");
 
   return (
-    <Flex direction="column" gap="sm">
+    <Flex direction="column" gap="xs">
       <Flex direction="row" justify="space-between" align="center" wrap="wrap">
-        <Heading level={3}>Camp deals</Heading>
+        <Text format={{ fontWeight: "bold" }}>Camp deals</Text>
         <Text variant="microcopy">
           {overview.kids.length} kid{overview.kids.length === 1 ? "" : "s"} ·{" "}
           {overview.deals.length} deal{overview.deals.length === 1 ? "" : "s"}
@@ -303,20 +302,20 @@ function FamilyOverviewView({
       )}
 
       {/* ---- Open deals ---- */}
-      <Heading level={3}>Open</Heading>
+      <Text format={{ fontWeight: "bold" }}>Open ({open.length})</Text>
       {open.length === 0 ? (
         <Text variant="microcopy">No open deals.</Text>
       ) : (
-        <Flex direction="column" gap="xs">
+        <Flex direction="column" gap="flush">
           {open.map((d) => (
-            <Flex key={d.dealId} direction="row" gap="sm" align="center" wrap="wrap">
-              <Tag variant="default">{d.year || "—"}</Tag>
+            <Flex key={d.dealId} direction="row" gap="xs" align="baseline" wrap="wrap">
               {multiKid && d.childName && (
                 <Text format={{ fontWeight: "bold" }}>{d.childName}</Text>
               )}
-              <Tag variant="warning">{d.statusLabel}</Tag>
-              {d.camp && <Text variant="microcopy">{d.camp}</Text>}
-              <Link href={d.dealUrl}>Open deal</Link>
+              <Text variant="microcopy">
+                {`${d.year || "—"} · ${d.statusLabel}${d.camp ? ` — ${d.camp}` : ""}`}
+              </Text>
+              <Link href={d.dealUrl}>View</Link>
             </Flex>
           ))}
         </Flex>
@@ -325,7 +324,7 @@ function FamilyOverviewView({
       <Divider />
 
       {/* ---- Historic: attended (Closed Won) ---- */}
-      <Heading level={3}>Attended (Closed Won)</Heading>
+      <Text format={{ fontWeight: "bold" }}>Attended ({won.length})</Text>
       {won.length === 0 ? (
         <Text variant="microcopy">No past enrollments.</Text>
       ) : (
@@ -335,23 +334,24 @@ function FamilyOverviewView({
       <Divider />
 
       {/* ---- Historic: closed lost ---- */}
-      <Heading level={3}>Closed Lost</Heading>
+      <Text format={{ fontWeight: "bold" }}>Closed Lost ({lost.length})</Text>
       {lost.length === 0 ? (
         <Text variant="microcopy">None.</Text>
       ) : (
-        <Flex direction="column" gap="xs">
+        <Flex direction="column" gap="flush">
           {lost.map((d) => (
-            <Flex key={d.dealId} direction="row" gap="sm" align="center" wrap="wrap">
-              <Tag variant="default">{d.year || "—"}</Tag>
+            <Flex key={d.dealId} direction="row" gap="xs" align="baseline" wrap="wrap">
               {multiKid && d.childName && (
                 <Text format={{ fontWeight: "bold" }}>{d.childName}</Text>
               )}
               <Text variant="microcopy">
-                {LOST_LABELS[d.closedLostCategory] ||
+                {`${d.year || "—"} · ${
+                  LOST_LABELS[d.closedLostCategory] ||
                   d.closedLostCategory ||
-                  "No reason recorded"}
+                  "No reason recorded"
+                }`}
               </Text>
-              <Link href={d.dealUrl}>Open deal</Link>
+              <Link href={d.dealUrl}>View</Link>
             </Flex>
           ))}
         </Flex>
@@ -372,17 +372,20 @@ function FamilyOverviewView({
 
 /** One Closed-Won row: camp, tuition, weeks — the facts that matter later. */
 function WonRow({ d, showKid }: { d: DealSummary; showKid: boolean }) {
+  const bits = [
+    d.year || "—",
+    d.camp || "Camp not recorded",
+    d.tuition ? money(d.tuition, d.currency) : "",
+    d.weeks ? `${d.weeks} wk` : "",
+    d.sessionName,
+  ].filter(Boolean);
   return (
-    <Flex direction="row" gap="sm" align="center" wrap="wrap">
-      <Tag variant="default">{d.year || "—"}</Tag>
+    <Flex direction="row" gap="xs" align="baseline" wrap="wrap">
       {showKid && d.childName && (
         <Text format={{ fontWeight: "bold" }}>{d.childName}</Text>
       )}
-      <Tag variant="success">{d.camp || "Camp not recorded"}</Tag>
-      {d.tuition && <Text variant="microcopy">{money(d.tuition, d.currency)}</Text>}
-      {d.weeks && <Text variant="microcopy">{d.weeks} wk</Text>}
-      {d.sessionName && <Text variant="microcopy">{d.sessionName}</Text>}
-      <Link href={d.dealUrl}>Open deal</Link>
+      <Text variant="microcopy">{bits.join(" · ")}</Text>
+      <Link href={d.dealUrl}>View</Link>
     </Flex>
   );
 }
@@ -398,7 +401,7 @@ function GroupedWonList({
 }) {
   if (groupBy === "year") {
     return (
-      <Flex direction="column" gap="xs">
+      <Flex direction="column" gap="flush">
         {deals.map((d) => (
           <WonRow key={d.dealId} d={d} showKid={multiKid} />
         ))}
@@ -413,11 +416,11 @@ function GroupedWonList({
     groups.set(k, [...(groups.get(k) || []), d]);
   }
   return (
-    <Flex direction="column" gap="sm">
+    <Flex direction="column" gap="xs">
       {Array.from(groups.entries()).map(([label, ds]) => (
         <Box key={label}>
           <Text format={{ fontWeight: "bold" }}>{label}</Text>
-          <Flex direction="column" gap="xs">
+          <Flex direction="column" gap="flush">
             {ds.map((d) => (
               <WonRow key={d.dealId} d={d} showKid={groupBy !== "kid" && multiKid} />
             ))}
@@ -530,8 +533,8 @@ function AddDealSection({
   );
 
   return (
-    <Flex direction="column" gap="sm">
-      <Heading level={3}>Add deal</Heading>
+    <Flex direction="column" gap="xs">
+      <Text format={{ fontWeight: "bold" }}>Add deal</Text>
       <Text variant="microcopy">
         Creates the deal at New Lead with the household, parent, and child
         associations set automatically.
@@ -549,22 +552,13 @@ function AddDealSection({
 
       {/* Gentle heads-up, not a block — two programs in one year is valid. */}
       {!needsConfirm && sameYearDeals.length > 0 && (
-        <Alert title={`${kidName || "This kid"} already has ${year} deal${
-          sameYearDeals.length === 1 ? "" : "s"
-        }`} variant="info">
-          <Flex direction="column" gap="xs">
-            {sameYearDeals.map((d) => (
-              <Flex key={d.dealId} direction="row" gap="sm" wrap="wrap">
-                <Tag variant="default">{d.statusLabel}</Tag>
-                <Text variant="microcopy">{d.dealName}</Text>
-              </Flex>
-            ))}
-            <Text variant="microcopy">
-              You can still add another — e.g. a second program in the same
-              summer.
-            </Text>
-          </Flex>
-        </Alert>
+        <Text variant="microcopy">
+          {`Note: ${kidName || "this kid"} already has ${year} deal${
+            sameYearDeals.length === 1 ? "" : "s"
+          } — ${sameYearDeals
+            .map((d) => `"${d.dealName}" (${d.statusLabel})`)
+            .join(", ")}. You can still add another (e.g. a second program).`}
+        </Text>
       )}
 
       {singleKid ? (
