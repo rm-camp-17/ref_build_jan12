@@ -236,6 +236,22 @@ function FamilyCard({ context, actions }: { context: any; actions?: any }) {
 // Overview view
 // ============================================================================
 
+/**
+ * Tiny uppercase label so sections read as quiet dividers while bold text
+ * stays reserved for the names that matter (kids, camps, group headers).
+ */
+function SectionLabel({ text }: { text: string }) {
+  return (
+    <Text variant="microcopy" format={{ fontWeight: "bold" }}>
+      {text.toUpperCase()}
+    </Text>
+  );
+}
+
+function byYearDesc(a: DealSummary, b: DealSummary): number {
+  return (b.year || "").localeCompare(a.year || "");
+}
+
 function FamilyOverviewView({
   overview,
   expertOptions,
@@ -261,9 +277,15 @@ function FamilyOverviewView({
     [overview.deals, kidFilter]
   );
 
-  const open = deals.filter((d) => d.category === "open");
-  const won = deals.filter((d) => d.category === "won");
-  const lost = deals.filter((d) => d.category === "lost");
+  const open = deals
+    .filter((d) => d.category === "open")
+    .sort((a, b) => (a.year || "").localeCompare(b.year || ""));
+  const won = deals.filter((d) => d.category === "won").sort(byYearDesc);
+  const lost = deals.filter((d) => d.category === "lost").sort(byYearDesc);
+
+  // Kid names only add signal when several kids could appear in one list.
+  const showKidNames = multiKid && kidFilter === "ALL";
+  const historyGroupBy = multiKid ? groupBy : "year";
 
   return (
     <Flex direction="column" gap="xs">
@@ -302,21 +324,13 @@ function FamilyOverviewView({
       )}
 
       {/* ---- Open deals ---- */}
-      <Text format={{ fontWeight: "bold" }}>Open ({open.length})</Text>
+      <SectionLabel text={`Open (${open.length})`} />
       {open.length === 0 ? (
         <Text variant="microcopy">No open deals.</Text>
       ) : (
         <Flex direction="column" gap="flush">
           {open.map((d) => (
-            <Flex key={d.dealId} direction="row" gap="xs" align="baseline" wrap="wrap">
-              {multiKid && d.childName && (
-                <Text format={{ fontWeight: "bold" }}>{d.childName}</Text>
-              )}
-              <Text variant="microcopy">
-                {`${d.year || "—"} · ${d.statusLabel}${d.camp ? ` — ${d.camp}` : ""}`}
-              </Text>
-              <Link href={d.dealUrl}>View</Link>
-            </Flex>
+            <OpenRow key={d.dealId} d={d} showKid={showKidNames} />
           ))}
         </Flex>
       )}
@@ -324,37 +338,37 @@ function FamilyOverviewView({
       <Divider />
 
       {/* ---- Historic: attended (Closed Won) ---- */}
-      <Text format={{ fontWeight: "bold" }}>Attended ({won.length})</Text>
+      <SectionLabel text={`Attended (${won.length})`} />
       {won.length === 0 ? (
         <Text variant="microcopy">No past enrollments.</Text>
       ) : (
-        <GroupedWonList deals={won} groupBy={multiKid ? groupBy : "year"} multiKid={multiKid} />
+        <GroupedDealList
+          deals={won}
+          groupBy={historyGroupBy}
+          kids={overview.kids}
+          showKidNames={showKidNames}
+          renderRow={(d, o) => (
+            <WonRow key={d.dealId} d={d} showKid={o.showKid} showCamp={o.showCamp} />
+          )}
+        />
       )}
 
       <Divider />
 
       {/* ---- Historic: closed lost ---- */}
-      <Text format={{ fontWeight: "bold" }}>Closed Lost ({lost.length})</Text>
+      <SectionLabel text={`Closed Lost (${lost.length})`} />
       {lost.length === 0 ? (
         <Text variant="microcopy">None.</Text>
       ) : (
-        <Flex direction="column" gap="flush">
-          {lost.map((d) => (
-            <Flex key={d.dealId} direction="row" gap="xs" align="baseline" wrap="wrap">
-              {multiKid && d.childName && (
-                <Text format={{ fontWeight: "bold" }}>{d.childName}</Text>
-              )}
-              <Text variant="microcopy">
-                {`${d.year || "—"} · ${
-                  LOST_LABELS[d.closedLostCategory] ||
-                  d.closedLostCategory ||
-                  "No reason recorded"
-                }`}
-              </Text>
-              <Link href={d.dealUrl}>View</Link>
-            </Flex>
-          ))}
-        </Flex>
+        <GroupedDealList
+          deals={lost}
+          groupBy={historyGroupBy}
+          kids={overview.kids}
+          showKidNames={showKidNames}
+          renderRow={(d, o) => (
+            <LostRow key={d.dealId} d={d} showKid={o.showKid} showCamp={o.showCamp} />
+          )}
+        />
       )}
 
       <Divider />
@@ -370,60 +384,159 @@ function FamilyOverviewView({
   );
 }
 
-/** One Closed-Won row: camp, tuition, weeks — the facts that matter later. */
-function WonRow({ d, showKid }: { d: DealSummary; showKid: boolean }) {
-  const bits = [
-    d.year || "—",
-    d.camp || "Camp not recorded",
-    d.tuition ? money(d.tuition, d.currency) : "",
-    d.weeks ? `${d.weeks} wk` : "",
-    d.sessionName,
-  ].filter(Boolean);
+// ---- Deal rows (one line each; the bold year anchors the eye) --------------
+
+/** Open deal: year · camp, status as a tag, quiet View link. */
+function OpenRow({ d, showKid }: { d: DealSummary; showKid: boolean }) {
   return (
-    <Flex direction="row" gap="xs" align="baseline" wrap="wrap">
+    <Flex direction="row" gap="xs" align="center" wrap="wrap">
       {showKid && d.childName && (
         <Text format={{ fontWeight: "bold" }}>{d.childName}</Text>
       )}
-      <Text variant="microcopy">{bits.join(" · ")}</Text>
+      <Text variant="microcopy" format={{ fontWeight: "bold" }}>
+        {d.year || "—"}
+      </Text>
+      {d.camp && <Text variant="microcopy">{d.camp}</Text>}
+      {d.statusLabel && <Tag variant="default">{d.statusLabel}</Tag>}
       <Link href={d.dealUrl}>View</Link>
     </Flex>
   );
 }
 
-function GroupedWonList({
+/** Closed-Won row: camp, tuition, weeks — the facts that matter later. */
+function WonRow({
+  d,
+  showKid,
+  showCamp,
+}: {
+  d: DealSummary;
+  showKid: boolean;
+  showCamp: boolean;
+}) {
+  const facts = [
+    showCamp ? d.camp || "Camp not recorded" : "",
+    d.tuition ? money(d.tuition, d.currency) : "",
+    d.weeks ? `${d.weeks} wk` : "",
+    d.sessionName,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <Flex direction="row" gap="xs" align="baseline" wrap="wrap">
+      {showKid && d.childName && (
+        <Text format={{ fontWeight: "bold" }}>{d.childName}</Text>
+      )}
+      <Text variant="microcopy" format={{ fontWeight: "bold" }}>
+        {d.year || "—"}
+      </Text>
+      {facts && <Text variant="microcopy">{facts}</Text>}
+      <Link href={d.dealUrl}>View</Link>
+    </Flex>
+  );
+}
+
+function LostRow({
+  d,
+  showKid,
+  showCamp,
+}: {
+  d: DealSummary;
+  showKid: boolean;
+  showCamp: boolean;
+}) {
+  const reason =
+    LOST_LABELS[d.closedLostCategory] ||
+    d.closedLostCategory ||
+    "No reason recorded";
+  return (
+    <Flex direction="row" gap="xs" align="baseline" wrap="wrap">
+      {showKid && d.childName && (
+        <Text format={{ fontWeight: "bold" }}>{d.childName}</Text>
+      )}
+      <Text variant="microcopy" format={{ fontWeight: "bold" }}>
+        {d.year || "—"}
+      </Text>
+      <Text variant="microcopy">
+        {reason + (showCamp && d.camp ? ` — ${d.camp}` : "")}
+      </Text>
+      <Link href={d.dealUrl}>View</Link>
+    </Flex>
+  );
+}
+
+// ---- Grouping --------------------------------------------------------------
+
+interface RowOpts {
+  showKid: boolean;
+  showCamp: boolean;
+}
+
+/**
+ * History list with the "Group history by" behavior. Ungrouped ("year") is a
+ * flat year-sorted list; "kid" and "camp" nest rows under a bold group header
+ * with a count, and drop the grouped-on field from each row so the header is
+ * doing the work. Kid groups follow the household's kid order.
+ */
+function GroupedDealList({
   deals,
   groupBy,
-  multiKid,
+  kids,
+  showKidNames,
+  renderRow,
 }: {
   deals: DealSummary[];
   groupBy: string;
-  multiKid: boolean;
+  kids: Kid[];
+  showKidNames: boolean;
+  renderRow: (d: DealSummary, opts: RowOpts) => React.ReactNode;
 }) {
-  if (groupBy === "year") {
+  if (groupBy !== "kid" && groupBy !== "camp") {
     return (
       <Flex direction="column" gap="flush">
-        {deals.map((d) => (
-          <WonRow key={d.dealId} d={d} showKid={multiKid} />
-        ))}
+        {deals.map((d) => renderRow(d, { showKid: showKidNames, showCamp: true }))}
       </Flex>
     );
   }
+
   const keyOf = (d: DealSummary) =>
-    groupBy === "kid" ? d.childName || "Unknown kid" : d.camp || "Camp not recorded";
+    groupBy === "kid"
+      ? d.childName || "Unknown kid"
+      : d.camp || "Camp not recorded";
   const groups = new Map<string, DealSummary[]>();
   for (const d of deals) {
     const k = keyOf(d);
     groups.set(k, [...(groups.get(k) || []), d]);
   }
+
+  const entries = Array.from(groups.entries());
+  if (groupBy === "kid") {
+    const order = new Map(kids.map((k, i) => [k.name, i]));
+    entries.sort(
+      (a, b) =>
+        (order.get(a[0]) ?? 999) - (order.get(b[0]) ?? 999) ||
+        a[0].localeCompare(b[0])
+    );
+  } else {
+    entries.sort((a, b) => a[0].localeCompare(b[0]));
+  }
+
+  const rowOpts: RowOpts = {
+    showKid: groupBy !== "kid" && showKidNames,
+    showCamp: groupBy !== "camp",
+  };
+
   return (
     <Flex direction="column" gap="xs">
-      {Array.from(groups.entries()).map(([label, ds]) => (
+      {entries.map(([label, ds]) => (
         <Box key={label}>
-          <Text format={{ fontWeight: "bold" }}>{label}</Text>
+          <Flex direction="row" gap="xs" align="baseline">
+            <Text format={{ fontWeight: "bold" }}>{label}</Text>
+            <Text variant="microcopy">
+              {ds.length} deal{ds.length === 1 ? "" : "s"}
+            </Text>
+          </Flex>
           <Flex direction="column" gap="flush">
-            {ds.map((d) => (
-              <WonRow key={d.dealId} d={d} showKid={groupBy !== "kid" && multiKid} />
-            ))}
+            {ds.map((d) => renderRow(d, rowOpts))}
           </Flex>
         </Box>
       ))}
@@ -534,7 +647,7 @@ function AddDealSection({
 
   return (
     <Flex direction="column" gap="xs">
-      <Text format={{ fontWeight: "bold" }}>Add deal</Text>
+      <SectionLabel text="Add deal" />
       <Text variant="microcopy">
         Creates the deal at New Lead with the household, parent, and child
         associations set automatically.
