@@ -31,6 +31,11 @@ jest.mock('../lib/objects', () => ({
   getObject: (...a: any[]) => mockGetObject(...a),
 }));
 
+const mockGetOwnerByEmail = jest.fn();
+jest.mock('../lib/owners', () => ({
+  getOwnerByEmail: (...a: any[]) => mockGetOwnerByEmail(...a),
+}));
+
 import { getFamilyOverview, createFamilyDeal } from '../lib/family';
 import { config } from '../lib/config';
 
@@ -190,6 +195,10 @@ describe('createFamilyDeal', () => {
     expect(props.associated_child_id).toBe('10');
     expect(props.associated_household_id).toBe('77');
     expect(props.expertprofile).toBe('karen_meister');
+    expect(props.deal_currency_code).toBe('USD');
+    // No creatorEmail/ownerId given → unowned, and no lookup attempted.
+    expect(props.hubspot_owner_id).toBeUndefined();
+    expect(mockGetOwnerByEmail).not.toHaveBeenCalled();
 
     // Associations: child + household + two parents (deduped union).
     const assocCalls = mockCreateDefault.mock.calls.map((c) => `${c[2]}:${c[3]}`);
@@ -197,6 +206,80 @@ describe('createFamilyDeal', () => {
       expect.arrayContaining([`${CHILD}:10`, `${HH}:77`, 'contacts:5', 'contacts:6'])
     );
     expect(assocCalls).toHaveLength(4);
+  });
+
+  test('assigns the creating expert as deal owner via creatorEmail', async () => {
+    wireAssociations({
+      [`${CHILD}:10:deals`]: [],
+      [`${CHILD}:10:${HH}`]: ['77'],
+      [`${HH}:77:contacts`]: ['5'],
+      [`${CHILD}:10:contacts`]: [],
+    });
+    wireObjects({ [`${CHILD}:10`]: { child_name: 'Archie Conway' } });
+    mockGetOwnerByEmail.mockResolvedValue({
+      id: '42',
+      email: 'karen@campexperts.com',
+      name: 'Karen Meister',
+    });
+
+    const result = await createFamilyDeal({
+      childId: '10',
+      year: 2027,
+      expertProfile: 'karen_meister',
+      creatorEmail: 'karen@campexperts.com',
+    });
+
+    expect(result.success).toBe(true);
+    expect((result as any).ownerName).toBe('Karen Meister');
+    expect(mockGetOwnerByEmail).toHaveBeenCalledWith('karen@campexperts.com');
+    const props = mockCreateDeal.mock.calls[0][0].properties;
+    expect(props.hubspot_owner_id).toBe('42');
+  });
+
+  test('owner lookup miss or failure still creates the deal (unowned)', async () => {
+    wireAssociations({
+      [`${CHILD}:10:deals`]: [],
+      [`${CHILD}:10:${HH}`]: ['77'],
+      [`${HH}:77:contacts`]: ['5'],
+      [`${CHILD}:10:contacts`]: [],
+    });
+    wireObjects({ [`${CHILD}:10`]: { child_name: 'Archie Conway' } });
+    mockGetOwnerByEmail.mockRejectedValue(new Error('owners API down'));
+
+    const result = await createFamilyDeal({
+      childId: '10',
+      year: 2027,
+      expertProfile: 'karen_meister',
+      creatorEmail: 'karen@campexperts.com',
+    });
+
+    expect(result.success).toBe(true);
+    expect((result as any).ownerName).toBeUndefined();
+    const props = mockCreateDeal.mock.calls[0][0].properties;
+    expect(props.hubspot_owner_id).toBeUndefined();
+  });
+
+  test('explicit ownerId wins over creatorEmail (no lookup)', async () => {
+    wireAssociations({
+      [`${CHILD}:10:deals`]: [],
+      [`${CHILD}:10:${HH}`]: ['77'],
+      [`${HH}:77:contacts`]: ['5'],
+      [`${CHILD}:10:contacts`]: [],
+    });
+    wireObjects({ [`${CHILD}:10`]: { child_name: 'Archie Conway' } });
+
+    const result = await createFamilyDeal({
+      childId: '10',
+      year: 2027,
+      expertProfile: 'karen_meister',
+      ownerId: '99',
+      creatorEmail: 'karen@campexperts.com',
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockGetOwnerByEmail).not.toHaveBeenCalled();
+    const props = mockCreateDeal.mock.calls[0][0].properties;
+    expect(props.hubspot_owner_id).toBe('99');
   });
 
   test('asks for confirmation when the kid already has deals that year (no hard block)', async () => {

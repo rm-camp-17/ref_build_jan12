@@ -13,6 +13,7 @@
  *   pipeline  default, dealstage New Lead
  *   year1, deal_key "{childObjectId}|{year}", expertprofile
  *   associated_child_id / associated_household_id (FK properties)
+ *   hubspot_owner_id — the expert creating the deal (creatorEmail → owner)
  *   + default associations deal→child, deal→household, deal→parent contacts
  *
  * Dedup: creating is refused (409-style result) when the child already has a
@@ -24,6 +25,7 @@ import { hubspotClient } from './hubspot';
 import { config } from './config';
 import { getAssociatedIds } from './associations';
 import { getObject } from './objects';
+import { getOwnerByEmail } from './owners';
 
 // ============================================================================
 // Types
@@ -280,8 +282,14 @@ export interface CreateFamilyDealInput {
   expertProfile: string;
   /** Optional — resolved from the child when omitted. */
   householdId?: string | null;
-  /** Optional HubSpot owner to assign. */
+  /** Optional HubSpot owner to assign (wins over creatorEmail). */
   ownerId?: string | null;
+  /**
+   * Email of the logged-in card user. Resolved to a HubSpot owner so the
+   * deal is owned by the expert who created it. Lookup misses fail open
+   * (deal is created unowned) — never block creation on this.
+   */
+  creatorEmail?: string | null;
   /**
    * A kid CAN have multiple deals in one year (e.g. two programs in one
    * summer). When the kid already has deals for the target year we return
@@ -291,7 +299,14 @@ export interface CreateFamilyDealInput {
 }
 
 export type CreateFamilyDealResult =
-  | { success: true; dealId: string; dealName: string; dealUrl: string }
+  | {
+      success: true;
+      dealId: string;
+      dealName: string;
+      dealUrl: string;
+      /** Present when the deal was assigned to the creating expert. */
+      ownerName?: string;
+    }
   | {
       success: false;
       requiresConfirmation: true;
@@ -360,6 +375,27 @@ export async function createFamilyDeal(
   ]);
   const parentIds = Array.from(new Set(parentSets.flat()));
 
+  // Deal owner = the expert creating it. An explicit ownerId wins; otherwise
+  // resolve the logged-in card user's email to a HubSpot owner. A lookup miss
+  // creates the deal unowned rather than blocking creation.
+  let ownerId = input.ownerId ?? null;
+  let ownerName: string | null = null;
+  if (!ownerId && input.creatorEmail) {
+    try {
+      const owner = await getOwnerByEmail(input.creatorEmail);
+      if (owner) {
+        ownerId = owner.id;
+        ownerName = owner.name;
+      } else {
+        console.warn(
+          `[family] no HubSpot owner matches creator email ${input.creatorEmail}; creating unowned deal`
+        );
+      }
+    } catch (err: any) {
+      console.warn('[family] owner lookup failed:', err?.message);
+    }
+  }
+
   // Create the deal with the card's standard field set.
   const properties: Record<string, string> = {
     dealname: `${childName} | ${year}`,
@@ -370,9 +406,10 @@ export async function createFamilyDeal(
     associated_child_id: childId,
     associated_household_id: householdId ?? '',
     expertprofile: expertProfile,
+    deal_currency_code: 'USD',
     clone_handled_by_api: 'true',
   };
-  if (input.ownerId) properties.hubspot_owner_id = input.ownerId;
+  if (ownerId) properties.hubspot_owner_id = ownerId;
 
   let dealId: string;
   try {
@@ -412,6 +449,7 @@ export async function createFamilyDeal(
     dealId,
     dealName: properties.dealname,
     dealUrl: dealUrl(dealId),
+    ...(ownerName ? { ownerName } : {}),
   };
 }
 

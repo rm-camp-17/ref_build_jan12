@@ -9,7 +9,8 @@
  *     year: number              // e.g. 2027 (required)
  *     expertProfile: string     // deal expertprofile enum value (required)
  *     householdId?: string      // resolved from the child when omitted
- *     ownerId?: string          // optional HubSpot owner
+ *     ownerId?: string          // explicit HubSpot owner (wins over creatorEmail)
+ *     creatorEmail?: string     // logged-in card user → deal owner
  *     confirmDuplicate?: boolean // create even though same-year deals exist
  *   }
  *
@@ -39,6 +40,7 @@ export async function POST(req: NextRequest) {
     expertProfile?: unknown;
     householdId?: unknown;
     ownerId?: unknown;
+    creatorEmail?: unknown;
     confirmDuplicate?: unknown;
   };
   try {
@@ -87,6 +89,10 @@ export async function POST(req: NextRequest) {
       ownerId:
         typeof body.ownerId === 'string' && body.ownerId.trim()
           ? body.ownerId.trim()
+          : null,
+      creatorEmail:
+        typeof body.creatorEmail === 'string' && body.creatorEmail.trim()
+          ? body.creatorEmail.trim()
           : null,
       confirmDuplicate: body.confirmDuplicate === true,
     });
