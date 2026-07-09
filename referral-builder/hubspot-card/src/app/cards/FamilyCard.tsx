@@ -261,7 +261,7 @@ function FamilyOverviewView({
 }: {
   overview: Overview;
   expertOptions: Option[];
-  user: { firstName?: string; lastName?: string } | null;
+  user: { firstName?: string; lastName?: string; email?: string } | null;
   onChanged: () => void;
   actions?: any;
 }) {
@@ -557,7 +557,7 @@ function AddDealSection({
 }: {
   overview: Overview;
   expertOptions: Option[];
-  user: { firstName?: string; lastName?: string } | null;
+  user: { firstName?: string; lastName?: string; email?: string } | null;
   onCreated: () => void;
   actions?: any;
 }) {
@@ -615,6 +615,7 @@ function AddDealSection({
             year: parseInt(year, 10),
             expertProfile: expert,
             householdId: overview.householdId || undefined,
+            creatorEmail: user?.email || undefined,
             confirmDuplicate,
           }),
         });
@@ -630,7 +631,9 @@ function AddDealSection({
           setCreated({ dealName: data.dealName, dealUrl: data.dealUrl });
           actions?.addAlert?.({
             type: "success",
-            message: `Created ${data.dealName} with all associations.`,
+            message: `Created ${data.dealName}${
+              data.ownerName ? ` (owner: ${data.ownerName})` : ""
+            } with all associations.`,
           });
           onCreated();
         } else {
