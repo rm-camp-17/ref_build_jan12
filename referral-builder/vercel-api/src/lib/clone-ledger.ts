@@ -27,18 +27,35 @@ export interface CloneLedgerRow {
 // process. Cleared implicitly on cold start (each Lambda re-ensures once).
 let _ledgerEnsured = false;
 
+export interface CloneLedgerHealth {
+  totalRows: number;
+  removedDuplicates: number;
+  /** True when a unique index/PK on (source_key, target_year) is in place. */
+  dedupEnforced: boolean;
+}
+
 /**
- * Ensure the clone_ledger table exists. This self-heals environments where
- * migrations/001_clone_ledger.sql was never applied to the session Postgres —
- * without it, every clone throws `relation "clone_ledger" does not exist`.
+ * Ensure the clone_ledger table exists AND carries its dedup boundary.
+ *
+ * Two failure modes seen in production, both self-healed here:
+ *  - migrations/001_clone_ledger.sql never applied → every clone throws
+ *    `relation "clone_ledger" does not exist`. CREATE TABLE IF NOT EXISTS
+ *    fixes it.
+ *  - the table EXISTS but without the composite primary key (created by an
+ *    older definition or by hand) → CREATE TABLE IF NOT EXISTS silently
+ *    keeps it, and every `ON CONFLICT (source_key, target_year)` insert
+ *    fails with `there is no unique or exclusion constraint matching the ON
+ *    CONFLICT specification` (the 2026-07-10 clone-for-year incident, deals
+ *    60920961188 / 58006509201). Healing = dedup existing rows (keep the
+ *    earliest — the first clone is the authoritative one), then add a
+ *    unique index, which ON CONFLICT accepts just like a constraint.
  *
  * Runs via the pool (autocommit) and must be called BEFORE the clone's own
- * transaction, so a later ROLLBACK in the clone flow can't undo the table.
- * Idempotent (CREATE TABLE / INDEX IF NOT EXISTS) and guarded to run once per
- * process. The DDL mirrors migrations/001_clone_ledger.sql exactly.
+ * transaction, so a later ROLLBACK in the clone flow can't undo the DDL.
+ * Idempotent throughout; a redundant unique index next to an existing PK is
+ * harmless on a table this small.
  */
-export async function ensureCloneLedgerTable(): Promise<void> {
-  if (_ledgerEnsured) return;
+export async function healCloneLedger(): Promise<CloneLedgerHealth> {
   await query(
     `CREATE TABLE IF NOT EXISTS clone_ledger (
        source_key   TEXT          NOT NULL,
@@ -51,6 +68,44 @@ export async function ensureCloneLedgerTable(): Promise<void> {
   await query(
     `CREATE INDEX IF NOT EXISTS clone_ledger_target_year_idx ON clone_ledger (target_year)`
   );
+  // Dedup before adding the unique index — index creation fails while
+  // duplicate (source_key, target_year) rows exist. No-op when the PK has
+  // been enforcing uniqueness all along.
+  const removed = await query(
+    `DELETE FROM clone_ledger a
+     USING clone_ledger b
+     WHERE a.source_key = b.source_key
+       AND a.target_year = b.target_year
+       AND (a.created_at > b.created_at
+            OR (a.created_at = b.created_at AND a.ctid > b.ctid))
+     RETURNING 1`
+  );
+  await query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS clone_ledger_source_year_uq
+     ON clone_ledger (source_key, target_year)`
+  );
+  const [stats] = await query<{ total: number; enforced: boolean }>(
+    `SELECT
+       (SELECT COUNT(*)::int FROM clone_ledger) AS total,
+       EXISTS (
+         SELECT 1 FROM pg_indexes
+         WHERE tablename = 'clone_ledger' AND indexdef ILIKE '%unique%'
+       ) OR EXISTS (
+         SELECT 1 FROM pg_constraint
+         WHERE conrelid = 'clone_ledger'::regclass AND contype IN ('p', 'u')
+       ) AS enforced`
+  );
+  return {
+    totalRows: stats?.total ?? 0,
+    removedDuplicates: removed.length,
+    dedupEnforced: Boolean(stats?.enforced),
+  };
+}
+
+/** Once-per-process wrapper around healCloneLedger for the clone hot path. */
+export async function ensureCloneLedgerTable(): Promise<void> {
+  if (_ledgerEnsured) return;
+  await healCloneLedger();
   _ledgerEnsured = true;
 }
 
@@ -96,10 +151,11 @@ export async function findCloneLedger(
 }
 
 /**
- * Insert a clone into the ledger. The (source_key, target_year) primary
- * key prevents duplicate inserts even if the advisory lock somehow
- * fails (defense in depth). On conflict, we trust the existing row —
- * the caller should have read it before getting here.
+ * Insert a clone into the ledger. Written as INSERT … WHERE NOT EXISTS
+ * instead of ON CONFLICT so it works even when the unique index is missing
+ * (ON CONFLICT (cols) hard-fails without one — the 2026-07-10 incident).
+ * Race-safety comes from the advisory lock the caller holds; the unique
+ * index added by healCloneLedger is defense in depth on top.
  *
  * MUST be called inside a transaction that holds the advisory lock.
  */
@@ -111,8 +167,10 @@ export async function insertCloneLedger(
 ): Promise<void> {
   await client.query(
     `INSERT INTO clone_ledger (source_key, target_year, new_deal_id)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (source_key, target_year) DO NOTHING`,
+     SELECT $1, $2, $3
+     WHERE NOT EXISTS (
+       SELECT 1 FROM clone_ledger WHERE source_key = $1 AND target_year = $2
+     )`,
     [sourceKey, targetYear, newDealId]
   );
 }
