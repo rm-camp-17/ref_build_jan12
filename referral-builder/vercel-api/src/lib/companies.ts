@@ -14,6 +14,11 @@
 
 import { hubspotClient } from './hubspot';
 import { config } from './config';
+import {
+  pickCompanyForProgram,
+  scoreCompanyMatch,
+  CONFIDENT_SCORE,
+} from './deal-company-guard';
 
 // ============================================================================
 // Types
@@ -94,5 +99,58 @@ export async function getCompanyByProgramId(
       err.message
     );
     throw err;
+  }
+}
+
+/**
+ * Resolve a company id by (program) name — the backstop for the
+ * deal→company association when `program_id` is missing or doesn't match
+ * any company. `programname` on deals is written from the company's name,
+ * so an exact match usually hits; otherwise a token search scored by the
+ * §8 matching rule (deal-company-guard) picks a single confident match.
+ * Ambiguity returns null — for a billing-critical link we never guess.
+ */
+export async function findCompanyIdByName(name: string): Promise<string | null> {
+  const trimmed = (name || '').trim();
+  if (!trimmed) return null;
+  try {
+    const exact: any = await hubspotClient.crm.companies.searchApi.doSearch({
+      filterGroups: [
+        { filters: [{ propertyName: 'name', operator: 'EQ' as any, value: trimmed }] },
+      ],
+      properties: ['name'],
+      sorts: [],
+      limit: 2,
+      after: '0',
+    });
+    if (exact?.results?.length === 1) return String(exact.results[0].id);
+
+    const firstToken = trimmed.split(/[^A-Za-z0-9]+/).filter(Boolean)[0];
+    if (!firstToken) return null;
+    const tokens: any = await hubspotClient.crm.companies.searchApi.doSearch({
+      filterGroups: [
+        {
+          filters: [
+            { propertyName: 'name', operator: 'CONTAINS_TOKEN' as any, value: firstToken },
+          ],
+        },
+      ],
+      properties: ['name'],
+      sorts: [],
+      limit: 20,
+      after: '0',
+    });
+    const candidates = (tokens?.results || []).map((r: any) => ({
+      id: String(r.id),
+      name: r.properties?.name || '',
+    }));
+    const pick = pickCompanyForProgram(trimmed, candidates);
+    if (pick && scoreCompanyMatch(trimmed, pick.name) >= CONFIDENT_SCORE) {
+      return pick.id;
+    }
+    return null;
+  } catch (err: any) {
+    console.warn(`[companies] name lookup failed for "${trimmed}":`, err?.message);
+    return null;
   }
 }
