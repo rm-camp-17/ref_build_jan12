@@ -12,6 +12,7 @@ jest.mock('../lib/sessions', () => ({
 
 jest.mock('../lib/companies', () => ({
   getCompanyByProgramId: jest.fn(),
+  findCompanyIdByName: jest.fn().mockResolvedValue(null),
 }));
 
 jest.mock('../lib/deals', () => ({
@@ -21,18 +22,29 @@ jest.mock('../lib/deals', () => ({
   reconcileDealName: jest.fn((opts: any) => opts.currentName ?? ''),
 }));
 
+jest.mock('../lib/error-notifier', () => ({
+  notifyPipelineFailure: jest.fn().mockResolvedValue(undefined),
+}));
+
 import { getSessionById } from '../lib/sessions';
-import { getCompanyByProgramId } from '../lib/companies';
-import { updateDeal, associateDealToCompany } from '../lib/deals';
+import { getCompanyByProgramId, findCompanyIdByName } from '../lib/companies';
+import { updateDeal, associateDealToCompany, getDeal } from '../lib/deals';
+import { notifyPipelineFailure } from '../lib/error-notifier';
 import { selectSession, selectCustomSession } from '../lib/deal-updater';
 
 const mockGetSession = getSessionById as jest.Mock;
 const mockGetCompany = getCompanyByProgramId as jest.Mock;
+const mockFindByName = findCompanyIdByName as jest.Mock;
 const mockUpdateDeal = updateDeal as jest.Mock;
 const mockAssociate = associateDealToCompany as jest.Mock;
+const mockGetDeal = getDeal as jest.Mock;
+const mockNotify = notifyPipelineFailure as jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockGetDeal.mockResolvedValue(null);
+  mockFindByName.mockResolvedValue(null);
+  mockNotify.mockResolvedValue(undefined);
 });
 
 describe('selectSession', () => {
@@ -83,7 +95,7 @@ describe('selectSession', () => {
     expect(mockUpdateDeal).not.toHaveBeenCalled();
   });
 
-  test('skips company association when programId is null', async () => {
+  test('no programId and no resolvable company → alerts admin instead of silently skipping', async () => {
     mockGetSession.mockResolvedValue({
       id: 42,
       name: 'Session 1',
@@ -98,8 +110,10 @@ describe('selectSession', () => {
 
     expect(result.success).toBe(true);
     expect(mockUpdateDeal).toHaveBeenCalled();
-    expect(mockGetCompany).not.toHaveBeenCalled();
     expect(mockAssociate).not.toHaveBeenCalled();
+    expect(mockNotify).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'deal-company-association', dealId: '100' })
+    );
   });
 
   test('non-fatal: failed company-association does not fail the whole op', async () => {
@@ -171,5 +185,93 @@ describe('selectCustomSession', () => {
     });
 
     expect(result.properties.deal_currency_code).toBe('USD');
+  });
+
+  // Regression: the 2026-07-10 incident — every custom-session close won
+  // (Szuster ×4, Budd) landed with ZERO companies because this path never
+  // associated the camp. It must resolve via the deal's own program fields.
+  test('associates the camp company via the deal program_id (incident regression)', async () => {
+    mockGetDeal.mockResolvedValue({
+      id: '100',
+      dealname: 'Leo Szuster | 2026',
+      programname: 'KIMAMA MIAMI',
+      program_id: '3016',
+    });
+    mockGetCompany.mockResolvedValue({ hsObjectId: '800', name: 'KIMAMA MIAMI' });
+
+    const result = await selectCustomSession('100', {
+      description: '1 week at Kimama Miami',
+      tuition: 800,
+      currency: 'USD',
+      weeks: 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockGetCompany).toHaveBeenCalledWith('3016');
+    expect(mockAssociate).toHaveBeenCalledWith('100', '800');
+    expect(mockNotify).not.toHaveBeenCalled();
+  });
+
+  test('falls back to programname lookup when program_id misses', async () => {
+    mockGetDeal.mockResolvedValue({
+      id: '100',
+      dealname: 'Luca Szuster | 2026',
+      programname: 'DAYTRIPPERS',
+      program_id: null,
+    });
+    mockFindByName.mockResolvedValue('900');
+
+    await selectCustomSession('100', {
+      description: '2 weeks',
+      tuition: 425,
+      currency: 'USD',
+      weeks: 2,
+    });
+
+    expect(mockFindByName).toHaveBeenCalledWith('DAYTRIPPERS');
+    expect(mockAssociate).toHaveBeenCalledWith('100', '900');
+    expect(mockNotify).not.toHaveBeenCalled();
+  });
+
+  test('alerts admin when no company can be resolved (never silent)', async () => {
+    mockGetDeal.mockResolvedValue({
+      id: '100',
+      dealname: 'Some Kid | 2026',
+      programname: 'UNKNOWN CAMP NAME',
+      program_id: null,
+    });
+
+    const result = await selectCustomSession('100', {
+      description: 'Custom',
+      tuition: 500,
+      currency: 'USD',
+      weeks: 1,
+    });
+
+    expect(result.success).toBe(true); // the close itself still succeeds
+    expect(mockAssociate).not.toHaveBeenCalled();
+    expect(mockNotify).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'deal-company-association', dealId: '100' })
+    );
+  });
+
+  test('association failure is non-fatal to the close', async () => {
+    mockGetDeal.mockResolvedValue({
+      id: '100',
+      dealname: 'Kid | 2026',
+      programname: 'KIMAMA MIAMI',
+      program_id: '3016',
+    });
+    mockGetCompany.mockResolvedValue({ hsObjectId: '800', name: 'KIMAMA MIAMI' });
+    mockAssociate.mockRejectedValueOnce(new Error('boom'));
+
+    const result = await selectCustomSession('100', {
+      description: 'Custom',
+      tuition: 500,
+      currency: 'USD',
+      weeks: 1,
+    });
+
+    expect(result.success).toBe(true);
   });
 });
