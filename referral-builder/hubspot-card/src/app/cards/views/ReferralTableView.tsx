@@ -1054,7 +1054,8 @@ function MemoBuilderSection({
     body: string;
     campsMissingSummary: string[];
   } | null>(null);
-  // Camp List — the simplest output: short program name + clickable website.
+  // Camp List — the simplest output: short program name + website, shown in
+  // a copy-ready plain-text box (plus clickable links for spot-checking).
   const [listBusy, setListBusy] = useState(false);
   const [campList, setCampList] = useState<Array<{
     companyId: string;
@@ -1221,7 +1222,7 @@ function MemoBuilderSection({
     }
   }, [dealId, selectedIds, actions]);
 
-  // Camp List: the simplest output — short name + clickable website per camp.
+  // Camp List: the simplest output — short name + website per camp.
   // Same endpoint as Quick Email, but no note is logged.
   const generateCampList = useCallback(async () => {
     if (selectedIds.length === 0) {
@@ -1251,6 +1252,20 @@ function MemoBuilderSection({
       setListBusy(false);
     }
   }, [dealId, selectedIds]);
+
+  // Plain-text camp list for the copy box — one camp per line, mirroring the
+  // email's per-camp header (name, location, full URL so mail clients link it).
+  const campListText = (campList ?? [])
+    .map((c) =>
+      [
+        c.displayName,
+        c.location ? `(${c.location})` : "",
+        c.website ? `— ${c.website}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+    )
+    .join("\n");
 
   return (
     <Box>
@@ -1331,33 +1346,65 @@ function MemoBuilderSection({
             />
           )}
 
+          {/* Copy-ready boxes on purpose: copying from a text field carries
+              no styling, so the paste lands in the email as plain text.
+              (The old Alert rendering dragged its background + text colors
+              into mail clients.) */}
           {email && (
-            <Alert title="Email drafted" variant="success">
-              <Flex direction="column" gap="sm">
+            <Flex direction="column" gap="sm">
+              <Text format={{ fontWeight: "bold" }}>
+                Quick Email — ready to copy
+              </Text>
+              <Text variant="microcopy">
+                Click a box, select all (Ctrl/Cmd+A), copy, and paste into
+                your email — it comes out as plain text, no background or
+                colors. Replace the [bracketed] placeholders, and attach the
+                memo if you've generated one. A copy is saved as a note on
+                this deal.
+              </Text>
+              <Input
+                name="quick-email-subject"
+                label="Subject"
+                value={email.subject}
+                readOnly={true}
+              />
+              <TextArea
+                name="quick-email-body"
+                label="Email body"
+                value={email.body}
+                rows={Math.min(Math.max(email.body.split("\n").length + 1, 4), 18)}
+                readOnly={true}
+              />
+              {email.campsMissingSummary.length > 0 && (
                 <Text variant="microcopy">
-                  Copy the text below into your email (it's also saved as a
-                  note on this deal). Replace the [bracketed] placeholders,
-                  and attach the memo if you've generated one.
+                  No parent summary on file for:{" "}
+                  {email.campsMissingSummary.join(", ")} — add a sentence or
+                  two for these before sending.
                 </Text>
-                <Text format={{ fontWeight: "bold" }}>
-                  Subject: {email.subject}
-                </Text>
-                {email.body.split("\n").map((line, i) => (
-                  <Text key={i}>{line || " "}</Text>
-                ))}
-                {email.campsMissingSummary.length > 0 && (
-                  <Text variant="microcopy">
-                    No parent summary on file for:{" "}
-                    {email.campsMissingSummary.join(", ")} — add a sentence or
-                    two for these before sending.
-                  </Text>
-                )}
-              </Flex>
-            </Alert>
+              )}
+            </Flex>
           )}
 
           {campList && (
-            <Alert title="Camp list" variant="info">
+            <Flex direction="column" gap="sm">
+              <Text format={{ fontWeight: "bold" }}>
+                Camp list — ready to copy
+              </Text>
+              <Text variant="microcopy">
+                Click the box, select all (Ctrl/Cmd+A), copy, and paste into
+                your email — plain text, no background or colors. Full URLs
+                are included so they turn into links in the parent's email.
+              </Text>
+              <TextArea
+                name="camp-list-text"
+                label="Camp list"
+                value={campListText}
+                rows={Math.min(Math.max(campList.length + 1, 3), 12)}
+                readOnly={true}
+              />
+              <Text variant="microcopy">
+                Spot-check before sending — links open each camp's site:
+              </Text>
               <Flex direction="column" gap="xs">
                 {campList.map((c) => (
                   <Flex key={c.companyId} direction="row" gap="sm" wrap="wrap">
@@ -1373,7 +1420,7 @@ function MemoBuilderSection({
                   </Flex>
                 ))}
               </Flex>
-            </Alert>
+            </Flex>
           )}
 
           <Flex direction="row" gap="sm" wrap="wrap">
@@ -1400,8 +1447,9 @@ function MemoBuilderSection({
             </Button>
           </Flex>
           <Text variant="microcopy">
-            Camp List shows just names + clickable websites. Quick Email
-            drafts a short note with each camp's parent summary. Generate
+            Camp List shows just names + websites. Quick Email drafts a short
+            note with each camp's parent summary. Both appear in copy-ready
+            boxes that paste into your email as clean plain text. Generate
             Memo builds the full recommendation document.
           </Text>
         </Flex>
