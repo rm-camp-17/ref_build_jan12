@@ -20,10 +20,79 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/pg';
+import { hubspotClient } from '@/lib/hubspot';
+import { config } from '@/lib/config';
+import { getAssociatedIds } from '@/lib/associations';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
+
+/** All non-hubspot-internal property values currently set on an object. */
+async function readAllProps(
+  objectType: string,
+  objectId: string
+): Promise<Record<string, string>> {
+  const defs: any = await hubspotClient.crm.properties.coreApi.getAll(objectType);
+  const names: string[] = (defs?.results || [])
+    .map((p: any) => p.name)
+    .filter((n: string) => !n.startsWith('hs_'));
+  const obj: any = await hubspotClient.crm.objects.basicApi.getById(
+    objectType,
+    objectId,
+    names
+  );
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(obj?.properties || {})) {
+    if (v !== null && v !== '' && v !== undefined) out[k] = String(v);
+  }
+  return out;
+}
+
+/**
+ * ?deal=<dealId> mode — dump the deal's full family association graph from
+ * HubSpot: associated contacts (with name/email), household(s) and child(ren)
+ * with EVERY set property. This is everything a mailer could possibly read
+ * from HubSpot when composing "the parent" for a referral.
+ */
+async function dealGraph(dealId: string) {
+  const HH = config.objectTypes.household;
+  const CHILD = config.objectTypes.child;
+  const [contactIds, householdIds, childIds, companyIds] = await Promise.all([
+    getAssociatedIds('deals', dealId, 'contacts').catch(() => []),
+    getAssociatedIds('deals', dealId, HH).catch(() => []),
+    getAssociatedIds('deals', dealId, CHILD).catch(() => []),
+    getAssociatedIds('deals', dealId, 'companies').catch(() => []),
+  ]);
+  const contacts = await Promise.all(
+    contactIds.map(async (id) => {
+      try {
+        const c: any = await hubspotClient.crm.contacts.basicApi.getById(id, [
+          'firstname',
+          'lastname',
+          'email',
+          'phone',
+        ]);
+        return { id, ...c?.properties };
+      } catch {
+        return { id, error: 'unreadable' };
+      }
+    })
+  );
+  const households = await Promise.all(
+    householdIds.map(async (id) => ({
+      id,
+      properties: await readAllProps(HH, id).catch(() => ({ error: 'unreadable' })),
+    }))
+  );
+  const children = await Promise.all(
+    childIds.map(async (id) => ({
+      id,
+      properties: await readAllProps(CHILD, id).catch(() => ({ error: 'unreadable' })),
+    }))
+  );
+  return { dealId, contacts, households, children, companyIds };
+}
 
 const TABLE_HINT = /famil|contact|parent|child|kid|client|referr|household|deal|signup|enroll/i;
 const COL_HINT = /name|email|parent|guardian|mother|father|contact/i;
@@ -40,8 +109,15 @@ export async function GET(req: NextRequest) {
   const q = (searchParams.get('q') || '').trim();
   const onlyTable = (searchParams.get('table') || '').trim();
   const listOnly = searchParams.get('tables') === '1';
+  const dealId = (searchParams.get('deal') || '').trim();
 
   try {
+    if (dealId) {
+      if (!/^\d+$/.test(dealId)) {
+        return NextResponse.json({ error: 'deal must be numeric' }, { status: 400 });
+      }
+      return NextResponse.json(await dealGraph(dealId));
+    }
     const columns = await query<{
       table_name: string;
       column_name: string;
