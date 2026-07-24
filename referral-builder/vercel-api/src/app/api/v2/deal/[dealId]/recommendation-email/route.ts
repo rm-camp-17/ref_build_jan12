@@ -106,6 +106,11 @@ export async function POST(
       Promise.all(companyIds.map(getEmailCamp)),
     ]);
 
+    // Recommendations always list A–Z, not in the order the rep clicked them.
+    camps.sort((a, b) =>
+      a.displayName.localeCompare(b.displayName, 'en', { sensitivity: 'base' })
+    );
+
     const email = composeRecommendationEmail(camps, {
       summerYear: deal.year1 || '',
       expertName,
