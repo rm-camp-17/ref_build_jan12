@@ -23,7 +23,7 @@ import { waitUntil } from '@vercel/functions';
 import { getDeal } from '@/lib/deals';
 import { hubspotClient } from '@/lib/hubspot';
 import { getSessionsForProgram } from '@/lib/sessions';
-import { getWriteupForCompany } from '@/lib/writeups';
+import { getWriteupForCompany, cleanCampName } from '@/lib/writeups';
 import {
   composeMemo,
   MemoComposeError,
@@ -81,7 +81,15 @@ function normalizeUrl(raw: string): string {
 }
 
 async function getCompanyMeta(companyId: string): Promise<{
+  /** Raw company name — used for write-up matching (keeps every alias). */
   name: string;
+  /**
+   * Parent-facing name for the memo: the curated Short Program Name when set,
+   * else the raw name with agreement decorations stripped ("MED-O-LARK
+   * (January 2024 forward)" → "MED-O-LARK") — a dropdown's bookkeeping
+   * qualifiers must never appear in a family memo.
+   */
+  displayName: string;
   programId: string | null;
   location: string;
   website: string;
@@ -89,6 +97,7 @@ async function getCompanyMeta(companyId: string): Promise<{
   try {
     const c: any = await hubspotClient.crm.companies.basicApi.getById(companyId, [
       'name',
+      'short_program_name',
       config.properties.company.programId,
       'city',
       'state',
@@ -102,14 +111,22 @@ async function getCompanyMeta(companyId: string): Promise<{
     const website = normalizeUrl(
       p.website_for_recommendation_entry || p.website || p.domain || ''
     );
+    const name = p.name ?? `Company ${companyId}`;
     return {
-      name: p.name ?? `Company ${companyId}`,
+      name,
+      displayName: (p.short_program_name || '').trim() || cleanCampName(name) || name,
       programId: p[config.properties.company.programId] ?? null,
       location: formatLocation(p.city ?? '', p.state ?? ''),
       website,
     };
   } catch {
-    return { name: `Company ${companyId}`, programId: null, location: '', website: '' };
+    return {
+      name: `Company ${companyId}`,
+      displayName: `Company ${companyId}`,
+      programId: null,
+      location: '',
+      website: '',
+    };
   }
 }
 
@@ -144,7 +161,7 @@ async function runMemoJob(
         ]);
         return {
           companyId,
-          name: meta.name,
+          name: meta.displayName,
           location: meta.location,
           website: meta.website,
           writeupText: writeup?.text ?? null,

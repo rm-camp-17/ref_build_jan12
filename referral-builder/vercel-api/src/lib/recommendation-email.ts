@@ -19,6 +19,7 @@
 import { hubspotClient } from './hubspot';
 import { config } from './config';
 import { formatLocation, titleCase } from './us-states';
+import { cleanCampName } from './writeups';
 
 // ============================================================================
 // Types
@@ -71,7 +72,7 @@ export async function getEmailCamp(companyId: string): Promise<EmailCamp> {
     const p = c?.properties ?? {};
     const displayName =
       (p.short_program_name || '').trim() ||
-      titleCase(p.name || '') ||
+      titleCase(cleanCampName(p.name || '')) ||
       `Camp ${companyId}`;
     const location = formatLocation(p.city ?? '', p.state ?? '');
     return {

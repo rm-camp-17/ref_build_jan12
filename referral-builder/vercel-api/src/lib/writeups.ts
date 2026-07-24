@@ -69,6 +69,7 @@ const NOISE_TOKENS = new Set([
   'ltd',
   'co',
   'international',
+  'zz', // inactive-partner marker prefix ("zz(NOT USING SERVICES) …")
 ]);
 
 /**
@@ -85,6 +86,60 @@ export function normalizeName(name: string): string {
     .filter((t) => t && !NOISE_TOKENS.has(t))
     .join(' ')
     .trim();
+}
+
+/**
+ * Strip the agreement/bookkeeping decorations HubSpot dropdown variants carry
+ * so multiple agreements for one camp all resolve to the same base name:
+ *
+ *   "MED-O-LARK (January 2024 forward)"  → "MED-O-LARK"
+ *   "KIPPEWA POINT (FIRST YEAR)"         → "KIPPEWA POINT"
+ *   "ARROW WOOD 3"                       → "ARROW WOOD"   (trailing digit only —
+ *                                          leading digits like "6 POINTS" stay)
+ *   "zz(NOT USING SERVICES) MOHAWK DAY"  → "MOHAWK DAY"
+ */
+export function cleanCampName(name: string): string {
+  let s = (name || '')
+    .replace(/^\s*zz\s*/i, '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Trailing standalone agreement counters ("ARROW WOOD 3") — but never strip
+  // a name down to nothing or touch leading digits ("6 POINTS SPORTS").
+  const stripped = s.replace(/(\s+\d{1,4})+$/g, '').trim();
+  if (stripped) s = stripped;
+  return s;
+}
+
+/**
+ * Ordered candidate names to try when matching a company to a write-up:
+ *   1. The first "/" segment (cleaned) — when a dropdown lists several camps,
+ *      the camp before the slash is the one that applies; the rest are
+ *      extraneous ("Lake Owego/Pine Forest/Timber Tops" → Lake Owego).
+ *   2. The cleaned full name (agreement qualifiers stripped).
+ *   3. The raw full name (keeps parenthetical aliases like "IHC (Indian Head)"
+ *      available when the cleaned form is too thin).
+ *   4. Remaining "/" segments, in order.
+ */
+export function matchCandidates(name: string): string[] {
+  const raw = (name || '').trim();
+  const cleaned = cleanCampName(raw);
+  const segments = cleaned.includes('/')
+    ? cleaned.split('/').map((s) => cleanCampName(s)).filter(Boolean)
+    : [];
+  const ordered = [
+    ...(segments.length > 1 ? [segments[0]] : []),
+    cleaned,
+    raw,
+    ...(segments.length > 1 ? segments.slice(1) : []),
+  ];
+  const seen = new Set<string>();
+  return ordered.filter((c) => {
+    const slug = normalizeName(c);
+    if (!slug || seen.has(slug)) return false;
+    seen.add(slug);
+    return true;
+  });
 }
 
 // Seed write-ups, with slugs recomputed via the SAME normalizer the
@@ -115,6 +170,11 @@ export function scoreMatch(companySlug: string, rec: WriteupRecord): number {
   if (!a || !b) return 0;
   if (a === b) return 100 + (rec.docType === 'writeup' ? 1 : 0);
 
+  // Spacing-insensitive forms so "Arrow Wood" ↔ "Arrowwood" converge.
+  const aj = a.replace(/ /g, '');
+  const bj = b.replace(/ /g, '');
+  if (aj === bj) return 100 + (rec.docType === 'writeup' ? 1 : 0);
+
   const at = tokenSet(a);
   const bt = tokenSet(b);
   if (at.size === 0 || bt.size === 0) return 0;
@@ -123,14 +183,17 @@ export function scoreMatch(companySlug: string, rec: WriteupRecord): number {
   at.forEach((t) => {
     if (bt.has(t)) overlap++;
   });
-  if (overlap === 0) return 0;
+
+  const joinedContainment =
+    aj.length >= 4 && bj.length >= 4 && (aj.includes(bj) || bj.includes(aj));
+  if (overlap === 0 && !joinedContainment) return 0;
 
   const jaccard = overlap / (at.size + bt.size - overlap);
   const aInB = [...at].every((t) => bt.has(t));
   const bInA = [...bt].every((t) => at.has(t));
 
   let s = jaccard * 60;
-  if (aInB || bInA) s += 30; // one name is a subset of the other
+  if (aInB || bInA || joinedContainment) s += 30; // one name contains the other
   if (rec.docType === 'writeup') s += 5; // prefer curated write-ups over recaps
   return Math.min(s, 99);
 }
@@ -141,27 +204,33 @@ export const MATCH_THRESHOLD = 45;
 
 /**
  * Pure matcher: pick the best-scoring record for a company name from a given
- * set. Exported so it can be unit-tested against synthetic records (the live
- * seed changes over time). Returns null when nothing clears the threshold.
+ * set. Tries the ordered matchCandidates() forms — first slash segment, then
+ * the agreement-qualifier-stripped name, then the raw name, then remaining
+ * segments — and returns the first candidate that clears the threshold, so a
+ * multi-camp dropdown resolves to the camp before the "/" and an agreement
+ * variant resolves to its base camp. Exported for unit tests against
+ * synthetic records. Returns null when nothing clears the threshold.
  */
 export function matchWriteup(
   name: string,
   records: WriteupRecord[]
 ): { rec: WriteupRecord; score: number } | null {
-  const slug = normalizeName(name);
-  if (!slug) return null;
-
-  let best: WriteupRecord | null = null;
-  let bestScore = 0;
-  for (const rec of records) {
-    const score = scoreMatch(slug, rec);
-    if (score > bestScore) {
-      bestScore = score;
-      best = rec;
+  for (const candidate of matchCandidates(name)) {
+    const slug = normalizeName(candidate);
+    let best: WriteupRecord | null = null;
+    let bestScore = 0;
+    for (const rec of records) {
+      const score = scoreMatch(slug, rec);
+      if (score > bestScore) {
+        bestScore = score;
+        best = rec;
+      }
+    }
+    if (best && bestScore >= MATCH_THRESHOLD) {
+      return { rec: best, score: bestScore };
     }
   }
-  if (!best || bestScore < MATCH_THRESHOLD) return null;
-  return { rec: best, score: bestScore };
+  return null;
 }
 
 function bestSeedMatch(name: string): ResolvedWriteup | null {
@@ -178,8 +247,7 @@ function bestSeedMatch(name: string): ResolvedWriteup | null {
 }
 
 async function bestDbMatch(name: string): Promise<ResolvedWriteup | null> {
-  const slug = normalizeName(name);
-  if (!slug) return null;
+  if (!normalizeName(name)) return null;
   try {
     // The session Postgres may or may not have the camp_writeups table; if it
     // doesn't exist the query throws and we fall back to the seed.
@@ -195,31 +263,23 @@ async function bestDbMatch(name: string): Promise<ResolvedWriteup | null> {
         WHERE writeup_text IS NOT NULL AND writeup_text <> ''`,
       []
     );
-    let best: (typeof rows)[number] | null = null;
-    let bestScore = 0;
-    for (const row of rows) {
-      const rec: WriteupRecord = {
-        driveFileId: row.drive_file_id ?? '',
-        title: row.camp_name ?? '',
-        campName: row.camp_name ?? '',
-        slug: normalizeName(row.camp_name ?? ''),
-        docType: row.doc_type === 'recap' ? 'recap' : 'writeup',
-        text: row.writeup_text ?? '',
-      };
-      const score = scoreMatch(slug, rec);
-      if (score > bestScore) {
-        bestScore = score;
-        best = row;
-      }
-    }
-    if (!best || bestScore < MATCH_THRESHOLD) return null;
+    const records: WriteupRecord[] = rows.map((row) => ({
+      driveFileId: row.drive_file_id ?? '',
+      title: row.camp_name ?? '',
+      campName: row.camp_name ?? '',
+      slug: normalizeName(row.camp_name ?? ''),
+      docType: row.doc_type === 'recap' ? 'recap' : 'writeup',
+      text: row.writeup_text ?? '',
+    }));
+    const hit = matchWriteup(name, records);
+    if (!hit) return null;
     return {
-      campName: best.camp_name ?? name,
-      docType: best.doc_type === 'recap' ? 'recap' : 'writeup',
-      text: best.writeup_text ?? '',
+      campName: hit.rec.campName || name,
+      docType: hit.rec.docType,
+      text: hit.rec.text,
       source: 'db',
-      driveFileId: best.drive_file_id ?? null,
-      matchScore: Math.round(bestScore),
+      driveFileId: hit.rec.driveFileId || null,
+      matchScore: Math.round(hit.score),
     };
   } catch {
     return null;
