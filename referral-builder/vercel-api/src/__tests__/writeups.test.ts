@@ -92,3 +92,74 @@ describe('matchWriteup', () => {
     expect(hit?.rec.docType).toBe('writeup');
   });
 });
+
+// ============================================================================
+// Multi-agreement dropdown variants + slash-combined names (2026-07 goal:
+// "programs listed in HubSpot don't always get matched to the write ups")
+// ============================================================================
+
+import { cleanCampName, matchCandidates } from '../lib/writeups';
+
+describe('cleanCampName', () => {
+  test('strips agreement parentheticals', () => {
+    expect(cleanCampName('MED-O-LARK (January 2024 forward)')).toBe('MED-O-LARK');
+    expect(cleanCampName('KIPPEWA POINT (FIRST YEAR)')).toBe('KIPPEWA POINT');
+    expect(cleanCampName('WESTCOAST CONNECTION (OUTSIDE OF USA)')).toBe(
+      'WESTCOAST CONNECTION'
+    );
+  });
+
+  test('strips zz inactive markers', () => {
+    expect(cleanCampName('zz(NOT USING SERVICES) MOHAWK DAY NYC- NJ')).toBe(
+      'MOHAWK DAY NYC- NJ'
+    );
+  });
+
+  test('strips trailing agreement counters but keeps leading digits', () => {
+    expect(cleanCampName('ARROW WOOD 3')).toBe('ARROW WOOD');
+    expect(cleanCampName('6 POINTS SPORTS')).toBe('6 POINTS SPORTS');
+  });
+});
+
+describe('matchWriteup — agreement variants resolve to the base camp', () => {
+  const records = [
+    rec('Med-O-Lark'),
+    rec('Kippewa Point'),
+    rec('Arrowwood'),
+    rec('Westcoast Connection'),
+  ];
+
+  test.each([
+    ['MED-O-LARK (January 2024 forward)', 'Med-O-Lark'],
+    ['KIPPEWA POINT (FIRST YEAR)', 'Kippewa Point'],
+    ['WESTCOAST CONNECTION (OUTSIDE OF USA)', 'Westcoast Connection'],
+  ])('%s → %s', (companyName, expected) => {
+    const hit = matchWriteup(companyName, records);
+    expect(hit?.rec.campName).toBe(expected);
+  });
+
+  test('spacing variants converge ("ARROW WOOD 3" → "Arrowwood")', () => {
+    const hit = matchWriteup('ARROW WOOD 3', records);
+    expect(hit?.rec.campName).toBe('Arrowwood');
+    expect(hit!.score).toBeGreaterThanOrEqual(MATCH_THRESHOLD);
+  });
+});
+
+describe('matchWriteup — slash names use the camp before the slash', () => {
+  test('picks the first segment even when later segments also have write-ups', () => {
+    const records = [rec('Pine Forest'), rec('Timber Tops'), rec('Lake Owego')];
+    const hit = matchWriteup('LAKE OWEGO/PINE FOREST/TIMBER TOPS', records);
+    expect(hit?.rec.campName).toBe('Lake Owego');
+  });
+
+  test('falls back to later segments when the first has no write-up', () => {
+    const records = [rec('Chestnut Lake')];
+    const hit = matchWriteup('TRAILS END /CHESTNUT LAKE', records);
+    expect(hit?.rec.campName).toBe('Chestnut Lake');
+  });
+
+  test('candidate order: first segment, cleaned full, raw, rest', () => {
+    const cands = matchCandidates('LAKE OWEGO/PINE FOREST (2024) ');
+    expect(cands[0]).toBe('LAKE OWEGO');
+  });
+});

@@ -53,7 +53,10 @@ jest.mock('@/lib/sessions', () => ({
   getSessionsForProgram: jest.fn().mockResolvedValue([]),
 }));
 
-jest.mock('@/lib/writeups', () => ({ getWriteupForCompany: jest.fn() }));
+jest.mock('@/lib/writeups', () => ({
+  getWriteupForCompany: jest.fn(),
+  cleanCampName: (s: string) => s,
+}));
 
 jest.mock('@/lib/memo-compose', () => {
   class MemoComposeError extends Error {}
