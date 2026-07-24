@@ -164,6 +164,12 @@ async function runMemoJob(
       })
     );
 
+    // Camps always appear A–Z in the memo (At a Glance table + summaries),
+    // not in the order the rep selected them.
+    camps.sort((a, b) =>
+      a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })
+    );
+
     const limitedInfoCamps = camps
       .filter((c) => !c.writeupText)
       .map((c) => c.name);
