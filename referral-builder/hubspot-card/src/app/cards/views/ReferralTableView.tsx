@@ -125,6 +125,17 @@ interface Props {
 // Helpers
 // ============================================================================
 
+/** "Oct 24, 2025" from an ISO timestamp; '' when unparseable. */
+function formatReferredDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function getStatusTagVariant(
   status: string
 ): "default" | "success" | "warning" {
@@ -1719,6 +1730,11 @@ function ReferralCard({
 
         {expanded && (
           <Flex direction="column" gap="sm">
+            {referral.createdAt && formatReferredDate(referral.createdAt) && (
+              <Text variant="microcopy">
+                {`Originally referred: ${formatReferredDate(referral.createdAt)}`}
+              </Text>
+            )}
             <Select
               name={`status-${referral.id}`}
               label="Status"
